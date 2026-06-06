@@ -1,16 +1,15 @@
-from sqlalchemy import Integer, String
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import Column, Integer, String
 from geoalchemy2 import Geometry
-
-
-class Base(DeclarativeBase):
-    pass
-
+from database import Base
 
 class Airport(Base):
     __tablename__ = "airports"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String, nullable=False)
-    iata_code: Mapped[str] = mapped_column(String(3), nullable=False)
-    location = mapped_column(Geometry(geometry_type="POINT", srid=4326))
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    iata_code = Column(String, unique=True, index=True, nullable=False)
+    location = Column(Geometry(geometry_type='POINT', srid=4326), nullable=False)
+    
+    # --- NEW RISK COLUMNS ---
+    risk_level = Column(String, default="Low") # e.g., Low, Medium, High
+    risk_description = Column(String, default="Clear skies and normal operations.")
