@@ -1,0 +1,14 @@
+# Python environment and secrets
+venv/
+backend/venv/
+__pycache__/
+.env
+backend/.env
+frontend/.env
+
+# Node/React environment
+node_modules/
+frontend/node_modules/
+
+# Mac system files
+.DS_Store
