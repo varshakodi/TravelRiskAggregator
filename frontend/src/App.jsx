@@ -87,16 +87,16 @@ export default function App() {
   const safePathCoords = routeData ? getCoordinates(routeData.safe_route?.path) : [];
 
   return (
-    <div className="app-container">
-      <aside className="sidebar">
-        <header className="sidebar-header">
-          <h1>
-            Risk Aggregator <span className="version">v2.5</span>
+    <div className="app-container" style={{ display: 'flex', width: '100vw', height: '100vh', overflow: 'hidden' }}>
+      <aside className="sidebar" style={{ width: '380px', height: '100vh', overflowY: 'auto', background: '#141414', borderRight: '1px solid #333' }}>
+        <header className="sidebar-header" style={{ padding: '20px', borderBottom: '1px solid #333' }}>
+          <h1 style={{ margin: 0, fontSize: '1.2rem', color: '#fff' }}>
+            Risk Aggregator <span className="version" style={{ color: '#3b82f6' }}>v2.5</span>
           </h1>
-          <p>Global Threat &amp; Routing Engine</p>
+          <p style={{ margin: '5px 0 0', fontSize: '0.8rem', color: '#888' }}>Global Threat &amp; Routing Engine</p>
         </header>
 
-        <div className="sidebar-body">
+        <div className="sidebar-body" style={{ padding: '20px' }}>
           {airports.length > 0 && (
             <SearchPanel
               airports={airports}
@@ -105,55 +105,55 @@ export default function App() {
           )}
 
           {isAnalyzing && (
-            <div className="analyzing-block">
-              <div className="skeleton-pulse" style={{ height: '20px', width: '60%', marginBottom: '10px' }} />
-              <div className="skeleton-pulse" style={{ height: '80px', width: '100%', marginBottom: '10px' }} />
-              <div className="skeleton-pulse" style={{ height: '40px', width: '80%' }} />
+            <div className="analyzing-block" style={{ marginTop: '30px' }}>
+              <div className="skeleton-pulse" style={{ height: '20px', width: '60%', marginBottom: '10px', background: '#2a2a2a', borderRadius: '4px' }} />
+              <div className="skeleton-pulse" style={{ height: '80px', width: '100%', marginBottom: '10px', background: '#2a2a2a', borderRadius: '4px' }} />
+              <div className="skeleton-pulse" style={{ height: '40px', width: '80%', background: '#2a2a2a', borderRadius: '4px' }} />
             </div>
           )}
 
           {routeData && !isAnalyzing && (
-            <div className="route-intelligence">
-              <h3 className="section-title">Route Intelligence</h3>
+            <div className="route-intelligence" style={{ marginTop: '30px', color: '#fff' }}>
+              <h3 className="section-title" style={{ borderBottom: '1px solid #333', paddingBottom: '10px', marginBottom: '15px' }}>Route Intelligence</h3>
 
               {routeData.is_rerouted ? (
-                <div className="status-card status-card--danger">
-                  <div className="status-label">Reroute Executed</div>
-                  <div>
+                <div className="status-card status-card--danger" style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid #ef4444', padding: '15px', borderRadius: '6px', marginBottom: '20px' }}>
+                  <div className="status-label" style={{ color: '#ef4444', fontWeight: 'bold', marginBottom: '5px' }}>⚠️ Reroute Executed</div>
+                  <div style={{ fontSize: '0.85rem' }}>
                     Direct path via {routeData.standard_route.path.join(' → ')} intercepted active
                     threat zones. Rerouting via {routeData.safe_route.path.join(' → ')}.
                   </div>
                 </div>
               ) : (
-                <div className="status-card status-card--clear">
-                  <div className="status-label">Route Clear</div>
+                <div className="status-card status-card--clear" style={{ background: 'rgba(34, 197, 94, 0.1)', border: '1px solid #22c55e', padding: '15px', borderRadius: '6px', marginBottom: '20px' }}>
+                  <div className="status-label" style={{ color: '#22c55e', fontWeight: 'bold' }}>✅ Route Clear</div>
                 </div>
               )}
 
-              <div className="glass-card glass-card--accent">
-                <div className="glass-card-title">AI Copilot Briefing</div>
+              <div className="glass-card glass-card--accent" style={{ background: '#111', border: '1px solid #444', padding: '15px', borderRadius: '6px', marginBottom: '20px', borderLeft: '3px solid #b700ff' }}>
+                <div className="glass-card-title" style={{ color: '#b700ff', fontWeight: 'bold', fontSize: '0.85rem', marginBottom: '8px' }}>🤖 AI Copilot Briefing</div>
                 {isAiThinking ? (
-                  <div className="skeleton-pulse" style={{ height: '40px', width: '100%' }} />
+                  <div className="skeleton-pulse" style={{ height: '40px', width: '100%', background: '#2a2a2a', borderRadius: '4px' }} />
                 ) : (
-                  <div className="glass-card-body">
+                  <div className="glass-card-body" style={{ fontSize: '0.85rem', color: '#ccc', lineHeight: '1.4' }}>
                     {aiBriefing || 'Standing by for route vectors.'}
                   </div>
                 )}
               </div>
 
-              <h4 className="matrix-title">Threat Matrix (Simulated)</h4>
-              <div className="glass-card">
-                <div className="threat-row">
+              <h4 className="matrix-title" style={{ color: '#aaa', marginBottom: '10px', fontSize: '0.9rem' }}>Threat Matrix (Simulated)</h4>
+              <div className="glass-card" style={{ background: '#1e1e1e', padding: '15px', borderRadius: '6px', fontSize: '0.85rem' }}>
+                <div className="threat-row" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
                   <span>Geopolitical Risk</span>
-                  <span className="threat-value--warn">72%</span>
+                  <span className="threat-value--warn" style={{ color: '#f59e0b' }}>72%</span>
                 </div>
-                <div className="threat-row">
+                <div className="threat-row" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
                   <span>Aviation Weather</span>
-                  <span className="threat-value--low">12%</span>
+                  <span className="threat-value--low" style={{ color: '#22c55e' }}>12%</span>
                 </div>
-                <div className="threat-row">
+                <div className="threat-row" style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span>Civil Unrest</span>
-                  <span className="threat-value--low">16%</span>
+                  <span className="threat-value--low" style={{ color: '#22c55e' }}>16%</span>
                 </div>
               </div>
             </div>
@@ -161,15 +161,19 @@ export default function App() {
         </div>
       </aside>
 
-      <div className="map-wrapper">
-        <MapContainer
-          center={[19.0, 66.0]}
-          zoom={5}
-          style={{ height: '100%', width: '100%' }}
+      {/* FIXED MAP WRAPPER: Ensures Leaflet doesn't crash to 0px height */}
+      <div className="map-wrapper" style={{ flex: 1, position: 'relative', height: '100vh', background: '#0a0a0a' }}>
+        <MapContainer 
+          center={[20.0, 30.0]} 
+          zoom={3} 
+          minZoom={2} 
+          maxBounds={[[-85, -180], [85, 180]]} // Safe bounds that prevent the map from crashing
+          maxBoundsViscosity={1.0} 
+          style={{ width: '100%', height: '100vh' }} // Forces Leaflet canvas to render at full height
         >
-          <TileLayer
-            url="https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png"
-            noWrap
+          <TileLayer 
+            url="https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png" 
+            noWrap={true} 
           />
 
           {dangerZones.map((zone) => (
@@ -179,13 +183,13 @@ export default function App() {
               style={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.25, weight: 2 }}
             >
               <Popup>
-                <div className="popup-title">High Risk Zone</div>
-                <hr className="popup-divider" />
-                <div className="popup-meta">
+                <div className="popup-title" style={{ color: '#ef4444', fontWeight: 'bold' }}>🚨 HIGH RISK ZONE</div>
+                <hr className="popup-divider" style={{ borderTop: '1px solid #ccc', margin: '8px 0' }} />
+                <div className="popup-meta" style={{ fontSize: '0.9rem', fontFamily: 'system-ui' }}>
                   <b>Source:</b> {zone.source}
                   <br />
                   <b>Status:</b> Active
-                  <div className="popup-desc">{zone.description}</div>
+                  <div className="popup-desc" style={{ marginTop: '5px', color: '#555' }}>{zone.description}</div>
                 </div>
               </Popup>
             </GeoJSON>
@@ -222,7 +226,7 @@ export default function App() {
               }}
             >
               <Popup>
-                <span className="popup-airport-name">{airport.name}</span>
+                <b className="popup-airport-name">{airport.name}</b>
                 <br />
                 <span className="popup-meta">Status: {airport.risk_level} Risk</span>
               </Popup>
@@ -230,18 +234,18 @@ export default function App() {
           ))}
         </MapContainer>
 
-        <div className="risk-legend">
-          <strong>Risk Legend</strong>
-          <div className="legend-item">
-            <span className="legend-swatch legend-swatch--zone" />
+        <div className="risk-legend" style={{ position: 'absolute', bottom: '20px', right: '20px', zIndex: 1000, background: 'rgba(20,20,20,0.9)', padding: '15px', borderRadius: '8px', border: '1px solid #333', fontSize: '0.8rem', color: '#fff', fontFamily: 'system-ui' }}>
+          <strong style={{ display: 'block', marginBottom: '10px' }}>Risk Legend</strong>
+          <div className="legend-item" style={{ display: 'flex', alignItems: 'center', marginBottom: '5px' }}>
+            <span className="legend-swatch legend-swatch--zone" style={{ width: '12px', height: '12px', background: '#ef4444', display: 'inline-block', marginRight: '8px', opacity: 0.5 }} />
             Conflict Zone (No-Fly)
           </div>
-          <div className="legend-item">
-            <span className="legend-swatch legend-swatch--blocked" />
+          <div className="legend-item" style={{ display: 'flex', alignItems: 'center', marginBottom: '5px' }}>
+            <span className="legend-swatch legend-swatch--blocked" style={{ width: '12px', height: '3px', background: '#ef4444', display: 'inline-block', marginRight: '8px' }} />
             Blocked Direct Path
           </div>
-          <div className="legend-item">
-            <span className="legend-swatch legend-swatch--route" />
+          <div className="legend-item" style={{ display: 'flex', alignItems: 'center' }}>
+            <span className="legend-swatch legend-swatch--route" style={{ width: '12px', height: '3px', background: '#3b82f6', display: 'inline-block', marginRight: '8px' }} />
             Active Radar Route
           </div>
         </div>
