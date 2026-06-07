@@ -182,3 +182,27 @@
     border-right-color: var(--border);
   }
 }
+/* Animated Radar Route */
+.animated-path {
+  stroke-dasharray: 15, 15;
+  animation: march 20s linear infinite;
+}
+
+@keyframes march {
+  to {
+    stroke-dashoffset: -1000;
+  }
+}
+
+/* Loading Skeleton Pulse */
+.skeleton-pulse {
+  animation: pulse 1.5s infinite ease-in-out;
+  background: #2a2a2a;
+  border-radius: 4px;
+}
+
+@keyframes pulse {
+  0% { opacity: 0.6; }
+  50% { opacity: 1; }
+  100% { opacity: 0.6; }
+}

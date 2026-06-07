@@ -1,180 +1,251 @@
 import { useEffect, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, CircleMarker, Polyline, GeoJSON } from 'react-leaflet';
+import { MapContainer, TileLayer, Popup, CircleMarker, Polyline, GeoJSON } from 'react-leaflet';
 import axios from 'axios';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
-
 import SearchPanel from './components/SearchPanel';
 
-let DefaultIcon = L.icon({
+const DefaultIcon = L.icon({
   iconUrl: markerIcon,
   shadowUrl: markerShadow,
   iconSize: [25, 41],
-  iconAnchor: [12, 41]
+  iconAnchor: [12, 41],
 });
 L.Marker.prototype.options.icon = DefaultIcon;
 
-function App() {
+export default function App() {
   const [dangerZones, setDangerZones] = useState([]);
   const [airports, setAirports] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeRouteParams, setActiveRouteParams] = useState(null);
-  const [calculatedRoute, setCalculatedRoute] = useState(null);
+  const [routeData, setRouteData] = useState(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [aiBriefing, setAiBriefing] = useState(null);
+  const [isAiThinking, setIsAiThinking] = useState(false);
 
-  // 1. Initial Data Engine Load
   useEffect(() => {
     Promise.all([
       axios.get('http://localhost:8000/api/airports'),
-      axios.get('http://localhost:8000/api/danger-zones')
+      axios.get('http://localhost:8000/api/danger-zones'),
     ])
-    .then(([airportsResponse, zonesResponse]) => {
-      if (airportsResponse.data && airportsResponse.data.airports) {
-        setAirports(airportsResponse.data.airports);
-      }
-      if (zonesResponse.data && zonesResponse.data.zones) {
-        setDangerZones(zonesResponse.data.zones);
-      }
-    })
-    .catch(err => {
-      console.error("Initialization network connection failed:", err);
-    })
-    .finally(() => {
-      setLoading(false);
-    });
+      .then(([airportsRes, zonesRes]) => {
+        if (airportsRes.data?.airports) setAirports(airportsRes.data.airports);
+        if (zonesRes.data?.zones) setDangerZones(zonesRes.data.zones);
+      })
+      .catch((err) => console.error(err))
+      .finally(() => setLoading(false));
   }, []);
 
-  // 2. Automated Routing Engine Hook
   useEffect(() => {
-    if (activeRouteParams) {
-      axios.post('http://localhost:8000/api/route/calculate', {
-        origin: activeRouteParams.origin,
-        destination: activeRouteParams.destination
-      })
-      .then(response => {
-        setCalculatedRoute(response.data);
-      })
-      .catch(err => {
-        console.error("Path calculation engine failed:", err);
-        alert("No clear path could be mapped out between these coordinates.");
-      });
-    }
+    if (!activeRouteParams) return;
+
+    setIsAnalyzing(true);
+    setRouteData(null);
+    setAiBriefing(null);
+
+    const timer = setTimeout(() => {
+      axios
+        .post('http://localhost:8000/api/route/calculate', activeRouteParams)
+        .then((response) => {
+          setRouteData(response.data);
+
+          setIsAiThinking(true);
+          axios
+            .post('http://localhost:8000/api/route/briefing', {
+              origin: activeRouteParams.origin,
+              destination: activeRouteParams.destination,
+              standard_route: response.data.standard_route.path,
+              safe_route: response.data.safe_route.path,
+              is_rerouted: response.data.is_rerouted,
+            })
+            .then((aiRes) => setAiBriefing(aiRes.data.briefing))
+            .catch((err) => console.error('AI Error:', err))
+            .finally(() => setIsAiThinking(false));
+        })
+        .catch(() => alert('No clear path mapped.'))
+        .finally(() => setIsAnalyzing(false));
+    }, 800);
+
+    return () => clearTimeout(timer);
   }, [activeRouteParams]);
 
   if (loading) {
-    return (
-      <div style={{ padding: '40px', fontFamily: 'system-ui', background: '#111', color: '#fff', height: '100vh' }}>
-        <h2>Initializing Global Risk Aggregator Engine...</h2>
-        <p style={{ color: '#888' }}>Assembling live aviation spatial networks and mapping conflict indexes...</p>
-      </div>
-    );
+    return <div className="app-loading">Initializing threat matrix…</div>;
   }
 
-  // Convert Dijkstra node response arrays to Leaflet map point coordinate sets
-  const flightPathCoordinates = calculatedRoute && calculatedRoute.path
-    ? calculatedRoute.path.map(iata => {
-        const airport = airports.find(a => a.iata_code === iata);
-        return airport ? [airport.lat, airport.lon] : null;
-      }).filter(coord => coord !== null)
-    : [];
+  const getCoordinates = (pathArray) =>
+    pathArray
+      ?.map((iata) => {
+        const apt = airports.find((a) => a.iata_code === iata);
+        return apt ? [apt.lat, apt.lon] : null;
+      })
+      .filter((c) => c !== null) || [];
 
-  const visibleAirports = calculatedRoute && calculatedRoute.path
-    ? airports.filter(a => calculatedRoute.path.includes(a.iata_code))
-    : airports;
+  const standardPathCoords = routeData ? getCoordinates(routeData.standard_route?.path) : [];
+  const safePathCoords = routeData ? getCoordinates(routeData.safe_route?.path) : [];
 
   return (
-    <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', position: 'relative', background: '#121212' }}>
-      <header style={{ padding: '15px 20px', background: '#1a1a1a', color: 'white', borderBottom: '3px solid #0066ff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h1 style={{ margin: 0, fontSize: '1.4rem', fontFamily: 'system-ui', fontWeight: '700', letterSpacing: '-0.5px' }}>
-          Travel Risk Aggregator <span style={{ fontSize: '0.8rem', color: '#0066ff', background: 'rgba(0,102,255,0.15)', padding: '3px 8px', borderRadius: '12px', marginLeft: '10px' }}>v2.0-Spatial</span>
-        </h1>
-      </header>
-      
-      {airports.length > 0 && (
-        <SearchPanel 
-          airports={airports} 
-          onRouteSelect={(orig, dest) => setActiveRouteParams({ origin: orig, destination: dest })} 
-        />
-      )}
+    <div className="app-container">
+      <aside className="sidebar">
+        <header className="sidebar-header">
+          <h1>
+            Risk Aggregator <span className="version">v2.5</span>
+          </h1>
+          <p>Global Threat &amp; Routing Engine</p>
+        </header>
 
-      <div style={{ flex: 1, width: '100%', height: '100%', zIndex: 1 }}>
-        <MapContainer center={[19.0, 66.0]} zoom={4} style={{ width: '100%', height: '100%' }}>
+        <div className="sidebar-body">
+          {airports.length > 0 && (
+            <SearchPanel
+              airports={airports}
+              onRouteSelect={(orig, dest) => setActiveRouteParams({ origin: orig, destination: dest })}
+            />
+          )}
+
+          {isAnalyzing && (
+            <div className="analyzing-block">
+              <div className="skeleton-pulse" style={{ height: '20px', width: '60%', marginBottom: '10px' }} />
+              <div className="skeleton-pulse" style={{ height: '80px', width: '100%', marginBottom: '10px' }} />
+              <div className="skeleton-pulse" style={{ height: '40px', width: '80%' }} />
+            </div>
+          )}
+
+          {routeData && !isAnalyzing && (
+            <div className="route-intelligence">
+              <h3 className="section-title">Route Intelligence</h3>
+
+              {routeData.is_rerouted ? (
+                <div className="status-card status-card--danger">
+                  <div className="status-label">Reroute Executed</div>
+                  <div>
+                    Direct path via {routeData.standard_route.path.join(' → ')} intercepted active
+                    threat zones. Rerouting via {routeData.safe_route.path.join(' → ')}.
+                  </div>
+                </div>
+              ) : (
+                <div className="status-card status-card--clear">
+                  <div className="status-label">Route Clear</div>
+                </div>
+              )}
+
+              <div className="glass-card glass-card--accent">
+                <div className="glass-card-title">AI Copilot Briefing</div>
+                {isAiThinking ? (
+                  <div className="skeleton-pulse" style={{ height: '40px', width: '100%' }} />
+                ) : (
+                  <div className="glass-card-body">
+                    {aiBriefing || 'Standing by for route vectors.'}
+                  </div>
+                )}
+              </div>
+
+              <h4 className="matrix-title">Threat Matrix (Simulated)</h4>
+              <div className="glass-card">
+                <div className="threat-row">
+                  <span>Geopolitical Risk</span>
+                  <span className="threat-value--warn">72%</span>
+                </div>
+                <div className="threat-row">
+                  <span>Aviation Weather</span>
+                  <span className="threat-value--low">12%</span>
+                </div>
+                <div className="threat-row">
+                  <span>Civil Unrest</span>
+                  <span className="threat-value--low">16%</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </aside>
+
+      <div className="map-wrapper">
+        <MapContainer
+          center={[19.0, 66.0]}
+          zoom={5}
+          style={{ height: '100%', width: '100%' }}
+        >
           <TileLayer
-            attribution='&copy; <a href="https://carto.com/">CartoDB</a>'
             url="https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png"
-            noWrap={true}
+            noWrap
           />
 
-          {/* A. Geopolitical Danger Polygons */}
           {dangerZones.map((zone) => (
-            <GeoJSON 
-              key={zone.id} 
-              data={zone.boundary} 
-              style={{
-                color: '#ff3333',
-                weight: 2,
-                fillColor: '#ff3333',
-                fillOpacity: 0.25,
-                dashArray: '6, 6'
-              }}
+            <GeoJSON
+              key={zone.id}
+              data={zone.boundary}
+              style={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.25, weight: 2 }}
             >
               <Popup>
-                <div style={{ fontFamily: 'system-ui' }}>
-                  <strong style={{ color: '#ff3333', fontSize: '1rem' }}>🚨 ACTIVE AIRSPACE WAR ZONE</strong><br/>
-                  <hr style={{ margin: '5px 0', border: '0', borderTop: '1px solid #eee' }}/>
-                  <b>Source Ingestion:</b> {zone.source}<br/>
-                  <b>Threat intel:</b> {zone.description}
+                <div className="popup-title">High Risk Zone</div>
+                <hr className="popup-divider" />
+                <div className="popup-meta">
+                  <b>Source:</b> {zone.source}
+                  <br />
+                  <b>Status:</b> Active
+                  <div className="popup-desc">{zone.description}</div>
                 </div>
               </Popup>
             </GeoJSON>
           ))}
 
-          {/* B. Dynamic Air Waypoint Pathing */}
-          {flightPathCoordinates.length > 0 && (
-            <Polyline 
-              positions={flightPathCoordinates} 
-              color="#0066ff" 
-              weight={4} 
-              opacity={0.9}
+          {standardPathCoords.length > 0 && routeData?.is_rerouted && (
+            <Polyline
+              positions={standardPathCoords}
+              color="#ef4444"
+              weight={3}
+              dashArray="5, 10"
+              opacity={0.4}
             />
           )}
 
-          {/* C. Terminal Node Infrastructure */}
-          {visibleAirports.map((airport) => {
-            const isHighRisk = airport.risk_level === 'High';
-            const riskColor = isHighRisk ? '#ff3333' : (airport.risk_level === 'Medium' ? '#ffaa00' : '#33cc33');
+          {safePathCoords.length > 0 && (
+            <Polyline
+              positions={safePathCoords}
+              color="#3b82f6"
+              weight={4}
+              opacity={0.9}
+              pathOptions={{ className: 'animated-path' }}
+            />
+          )}
 
-            return (
-              <div key={airport.id}>
-                <CircleMarker
-                  center={[airport.lat, airport.lon]}
-                  pathOptions={{ color: riskColor, fillColor: riskColor, fillOpacity: 0.15 }}
-                  radius={isHighRisk ? 35 : 20}
-                />
-                <Marker position={[airport.lat, airport.lon]}>
-                  <Popup>
-                    <div style={{ fontFamily: 'system-ui' }}>
-                      <div style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{airport.name} ({airport.iata_code})</div>
-                      <div style={{ 
-                        background: riskColor, color: 'white', padding: '3px 8px', 
-                        borderRadius: '4px', fontWeight: 'bold', display: 'inline-block', margin: '6px 0', fontSize: '0.8rem'
-                      }}>
-                        {airport.risk_level} Perimeter Risk
-                      </div>
-                      <div style={{ fontSize: '0.9rem', color: '#555' }}>
-                        {airport.risk_description}
-                      </div>
-                    </div>
-                  </Popup>
-                </Marker>
-              </div>
-            );
-          })}
+          {airports.map((airport) => (
+            <CircleMarker
+              key={airport.id}
+              center={[airport.lat, airport.lon]}
+              radius={airport.risk_level === 'High' ? 30 : 15}
+              pathOptions={{
+                color: airport.risk_level === 'High' ? '#ef4444' : '#22c55e',
+                fillOpacity: 0.15,
+              }}
+            >
+              <Popup>
+                <span className="popup-airport-name">{airport.name}</span>
+                <br />
+                <span className="popup-meta">Status: {airport.risk_level} Risk</span>
+              </Popup>
+            </CircleMarker>
+          ))}
         </MapContainer>
+
+        <div className="risk-legend">
+          <strong>Risk Legend</strong>
+          <div className="legend-item">
+            <span className="legend-swatch legend-swatch--zone" />
+            Conflict Zone (No-Fly)
+          </div>
+          <div className="legend-item">
+            <span className="legend-swatch legend-swatch--blocked" />
+            Blocked Direct Path
+          </div>
+          <div className="legend-item">
+            <span className="legend-swatch legend-swatch--route" />
+            Active Radar Route
+          </div>
+        </div>
       </div>
     </div>
   );
 }
-
-export default App;
