@@ -1,34 +1,28 @@
-from contextlib import asynccontextmanager
+import json
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.orm import Session
-from sqlalchemy import text, func
+from database import SessionLocal, engine
+from models import Base, Airport, FlightEdge, DangerZone
+from services.pathfinder import calculate_optimal_route
 
-from database import engine, SessionLocal
-from models import Base, Airport
+# Make sure all tables exist
+Base.metadata.create_all(bind=engine)
 
-# 1. Setup Database Extension on Startup
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    with engine.connect() as connection:
-        connection.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
-        connection.commit()
-    Base.metadata.create_all(bind=engine)
-    yield
+app = FastAPI()
 
-# 2. Initialize FastAPI App 
-app = FastAPI(lifespan=lifespan)
-
-# 3. Add Security/CORS Middleware so React can connect
+# Allow your React frontend to connect without getting blocked by CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 4. Database Connection Helper
+# Dependency to get database access per request
 def get_db():
     db = SessionLocal()
     try:
@@ -36,66 +30,56 @@ def get_db():
     finally:
         db.close()
 
-# --- API ENDPOINTS ---
-
-@app.get("/")
-def read_root():
-    return {"message": "API is running!"}
+class RouteRequest(BaseModel):
+    origin: str
+    destination: str
 
 @app.get("/api/airports")
-def get_all_airports(db: Session = Depends(get_db)):
-    # Fetch airports AND the new risk columns from the database
-    airports_data = db.query(
-        Airport.id, 
-        Airport.name, 
-        Airport.iata_code,
-        Airport.risk_level,         # <-- NEW
-        Airport.risk_description,   # <-- NEW
-        func.ST_X(Airport.location).label('lon'),
-        func.ST_Y(Airport.location).label('lat')
-    ).all()
-    
-    results = []
-    for a in airports_data:
-        results.append({
-            "id": a.id,
-            "name": a.name,
-            "iata_code": a.iata_code,
-            "risk_level": a.risk_level,             # <-- NEW
-            "risk_description": a.risk_description, # <-- NEW
-            "lon": a.lon,
-            "lat": a.lat
-        })
-        
-    return {"airports": results}
-
-@app.get("/api/distance")
-def calculate_flight_distance(origin: str, destination: str, db: Session = Depends(get_db)):
-    """
-    Calculates the great-circle distance between two airports using PostGIS.
-    """
-    orig_airport = db.query(Airport).filter(Airport.iata_code == origin.upper()).first()
-    dest_airport = db.query(Airport).filter(Airport.iata_code == destination.upper()).first()
-    
-    if not orig_airport or not dest_airport:
-        raise HTTPException(status_code=404, detail="One or both airports not found")
-        
-    # Ask the database directly using raw SQL to handle the spatial math
-    query = text(f"""
-        SELECT ST_Distance(
-            (SELECT location FROM {Airport.__tablename__} WHERE iata_code = :origin)::geography,
-            (SELECT location FROM {Airport.__tablename__} WHERE iata_code = :dest)::geography
-        )
+def get_airports(db: Session = Depends(get_db)):
+    # Pulls airports and converts PostGIS POINT geometry into lat/lon coordinates
+    query = text("""
+        SELECT id, name, iata_code, risk_level, risk_description, 
+               ST_X(location::geometry) as lon, ST_Y(location::geometry) as lat 
+        FROM airports
     """)
+    result = db.execute(query).fetchall()
     
-    distance_meters = db.execute(query, {"origin": origin.upper(), "dest": destination.upper()}).scalar()
+    airports = []
+    for row in result:
+        airports.append({
+            "id": row.id,
+            "name": row.name,
+            "iata_code": row.iata_code,
+            "risk_level": row.risk_level,
+            "risk_description": row.risk_description,
+            "lon": row.lon,
+            "lat": row.lat
+        })
+    return {"airports": airports}
+
+@app.get("/api/danger-zones")
+def get_danger_zones(db: Session = Depends(get_db)):
+    # Pulls automated risk zones and converts PostGIS POLYGON into GeoJSON
+    query = text("""
+        SELECT id, source_event, description, risk_level, ST_AsGeoJSON(boundary) as geojson 
+        FROM danger_zones
+    """)
+    result = db.execute(query).fetchall()
     
-    distance_km = distance_meters / 1000.0
-    distance_miles = distance_km * 0.621371
-    
-    return {
-        "origin": {"name": orig_airport.name, "iata": orig_airport.iata_code},
-        "destination": {"name": dest_airport.name, "iata": dest_airport.iata_code},
-        "distance_km": round(distance_km, 2),
-        "distance_miles": round(distance_miles, 2)
-    }
+    zones = []
+    for row in result:
+        zones.append({
+            "id": row.id,
+            "source": row.source_event,
+            "description": row.description,
+            "severity": row.risk_level,
+            "boundary": json.loads(row.geojson)
+        })
+    return {"zones": zones}
+
+@app.post("/api/route/calculate")
+def calculate_route(req: RouteRequest, db: Session = Depends(get_db)):
+    route = calculate_optimal_route(db, req.origin, req.destination)
+    if not route:
+        raise HTTPException(status_code=404, detail="No optimal route could be computed.")
+    return route
