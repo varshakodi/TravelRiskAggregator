@@ -9,6 +9,7 @@ from models import Base
 from services.pathfinder import calculate_route_comparison
 from services.ai_service import generate_threat_briefing
 from workers.aviation_worker import fetch_aviation_weather_alerts
+from workers.live_flights_worker import fetch_all_live_flights, fetch_route_flights
 
 # NEW: Import the background scheduler and our ingestion logic
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -27,17 +28,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- NEW: CRON SCHEDULER LIFECYCLE ---
+# --- CRON SCHEDULER LIFECYCLE ---
 @app.on_event("startup")
 def start_data_pipelines():
-    scheduler = BackgroundScheduler()
-    # Ingest Geopolitical data loops
-    scheduler.add_job(fetch_live_risk_data, 'interval', seconds=60)
-    # Ingest Meteorological storm cell layers
-    scheduler.add_job(fetch_aviation_weather_alerts, 'interval', seconds=60)
-    
-    scheduler.start()
-    print("[Engine] Concurrent multi-source threat data ingestion active (Geopolitical + Weather).")
+    # NOTE: Schedulers disabled to prevent duplicate zone insertion.
+    # Re-enable when connected to real ACLED/weather API keys.
+    # scheduler = BackgroundScheduler()
+    # scheduler.add_job(fetch_live_risk_data, 'interval', seconds=60)
+    # scheduler.add_job(fetch_aviation_weather_alerts, 'interval', seconds=60)
+    # scheduler.start()
+    print("[Engine] Static threat zones active. Live ingestion paused (no API keys configured).")
 
 def get_db():
     db = SessionLocal()
@@ -93,3 +93,23 @@ def get_ai_briefing(req: BriefingRequest):
         req.is_rerouted
     )
     return {"briefing": briefing}
+
+
+@app.get("/api/live-flights")
+def get_live_flights():
+    """
+    Returns real-time aircraft positions for the global map overlay.
+    Fetches live flights across major hub routes from AviationStack.
+    """
+    flights = fetch_all_live_flights()
+    return {"flights": flights, "count": len(flights)}
+
+
+@app.get("/api/live-flights/{dep_iata}/{arr_iata}")
+def get_route_live_flights(dep_iata: str, arr_iata: str):
+    """
+    Returns live flights for a specific origin->destination route pair.
+    Used in the Route Intelligence panel to show real aircraft on the selected path.
+    """
+    flights = fetch_route_flights(dep_iata.upper(), arr_iata.upper())
+    return {"flights": flights, "route": f"{dep_iata.upper()}->{arr_iata.upper()}", "count": len(flights)}

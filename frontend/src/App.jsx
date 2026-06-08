@@ -15,16 +15,28 @@ const DefaultIcon = L.icon({
 });
 L.Marker.prototype.options.icon = DefaultIcon;
 
-export default function App() {
-  const [dangerZones, setDangerZones] = useState([]);
-  const [airports, setAirports] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [activeRouteParams, setActiveRouteParams] = useState(null);
-  const [routeData, setRouteData] = useState(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [aiBriefing, setAiBriefing] = useState(null);
-  const [isAiThinking, setIsAiThinking] = useState(false);
+const statusColor = (status) => {
+  switch (status) {
+    case 'active':    return '#22c55e';
+    case 'landed':    return '#6b7280';
+    case 'cancelled': return '#ef4444';
+    case 'diverted':  return '#f59e0b';
+    default:          return '#60a5fa';
+  }
+};
 
+export default function App() {
+  const [dangerZones, setDangerZones]         = useState([]);
+  const [airports, setAirports]               = useState([]);
+  const [loading, setLoading]                 = useState(true);
+  const [activeRouteParams, setActiveRouteParams] = useState(null);
+  const [routeData, setRouteData]             = useState(null);
+  const [isAnalyzing, setIsAnalyzing]         = useState(false);
+  const [aiBriefing, setAiBriefing]           = useState(null);
+  const [isAiThinking, setIsAiThinking]       = useState(false);
+  const [routeFlights, setRouteFlights]       = useState([]);
+
+  // Initial data load
   useEffect(() => {
     Promise.all([
       axios.get('http://localhost:8000/api/airports'),
@@ -32,18 +44,20 @@ export default function App() {
     ])
       .then(([airportsRes, zonesRes]) => {
         if (airportsRes.data?.airports) setAirports(airportsRes.data.airports);
-        if (zonesRes.data?.zones) setDangerZones(zonesRes.data.zones);
+        if (zonesRes.data?.zones)       setDangerZones(zonesRes.data.zones);
       })
       .catch((err) => console.error(err))
       .finally(() => setLoading(false));
   }, []);
 
+  // Route computation
   useEffect(() => {
     if (!activeRouteParams) return;
 
     setIsAnalyzing(true);
     setRouteData(null);
     setAiBriefing(null);
+    setRouteFlights([]);
 
     const timer = setTimeout(() => {
       axios
@@ -51,14 +65,20 @@ export default function App() {
         .then((response) => {
           setRouteData(response.data);
 
+          // Fetch real scheduled flights for this route from AviationStack
+          axios
+            .get(`http://localhost:8000/api/live-flights/${activeRouteParams.origin}/${activeRouteParams.destination}`)
+            .then((res) => { if (res.data?.flights) setRouteFlights(res.data.flights); })
+            .catch(() => {});
+
           setIsAiThinking(true);
           axios
             .post('http://localhost:8000/api/route/briefing', {
-              origin: activeRouteParams.origin,
-              destination: activeRouteParams.destination,
+              origin:         activeRouteParams.origin,
+              destination:    activeRouteParams.destination,
               standard_route: response.data.standard_route.path,
-              safe_route: response.data.safe_route.path,
-              is_rerouted: response.data.is_rerouted,
+              safe_route:     response.data.safe_route.path,
+              is_rerouted:    response.data.is_rerouted,
             })
             .then((aiRes) => setAiBriefing(aiRes.data.briefing))
             .catch((err) => console.error('AI Error:', err))
@@ -84,19 +104,24 @@ export default function App() {
       .filter((c) => c !== null) || [];
 
   const standardPathCoords = routeData ? getCoordinates(routeData.standard_route?.path) : [];
-  const safePathCoords = routeData ? getCoordinates(routeData.safe_route?.path) : [];
+  const safePathCoords     = routeData ? getCoordinates(routeData.safe_route?.path)     : [];
 
   return (
-    <div className="app-container" style={{ display: 'flex', width: '100vw', height: '100vh', overflow: 'hidden' }}>
-      <aside className="sidebar" style={{ width: '380px', height: '100vh', overflowY: 'auto', background: '#141414', borderRight: '1px solid #333' }}>
-        <header className="sidebar-header" style={{ padding: '20px', borderBottom: '1px solid #333' }}>
-          <h1 style={{ margin: 0, fontSize: '1.2rem', color: '#fff' }}>
-            Risk Aggregator <span className="version" style={{ color: '#3b82f6' }}>v2.5</span>
+    <div style={{ display: 'flex', width: '100vw', height: '100vh', overflow: 'hidden' }}>
+
+      {/* ── SIDEBAR ── */}
+      <aside style={{ width: '360px', height: '100vh', overflowY: 'auto', background: '#0d0d0d', borderRight: '1px solid #222', flexShrink: 0 }}>
+
+        <header style={{ padding: '20px', borderBottom: '1px solid #222' }}>
+          <h1 style={{ margin: 0, fontSize: '1.15rem', color: '#fff', letterSpacing: '-0.02em' }}>
+            Risk Aggregator <span style={{ color: '#3b82f6' }}>v2.5</span>
           </h1>
-          <p style={{ margin: '5px 0 0', fontSize: '0.8rem', color: '#888' }}>Global Threat &amp; Routing Engine</p>
+          <p style={{ margin: '4px 0 0', fontSize: '0.75rem', color: '#555' }}>Global Threat &amp; Routing Engine</p>
         </header>
 
-        <div className="sidebar-body" style={{ padding: '20px' }}>
+        <div style={{ padding: '20px' }}>
+
+          {/* Route selector */}
           {airports.length > 0 && (
             <SearchPanel
               airports={airports}
@@ -104,56 +129,109 @@ export default function App() {
             />
           )}
 
+          {/* Skeleton while computing */}
           {isAnalyzing && (
-            <div className="analyzing-block" style={{ marginTop: '30px' }}>
-              <div className="skeleton-pulse" style={{ height: '20px', width: '60%', marginBottom: '10px', background: '#2a2a2a', borderRadius: '4px' }} />
-              <div className="skeleton-pulse" style={{ height: '80px', width: '100%', marginBottom: '10px', background: '#2a2a2a', borderRadius: '4px' }} />
-              <div className="skeleton-pulse" style={{ height: '40px', width: '80%', background: '#2a2a2a', borderRadius: '4px' }} />
+            <div style={{ marginTop: '28px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {[60, 100, 80].map((w, i) => (
+                <div key={i} className="skeleton-pulse" style={{ height: i === 1 ? '80px' : '20px', width: `${w}%`, background: '#1e1e1e', borderRadius: '6px' }} />
+              ))}
             </div>
           )}
 
+          {/* Route intelligence */}
           {routeData && !isAnalyzing && (
-            <div className="route-intelligence" style={{ marginTop: '30px', color: '#fff' }}>
-              <h3 className="section-title" style={{ borderBottom: '1px solid #333', paddingBottom: '10px', marginBottom: '15px' }}>Route Intelligence</h3>
+            <div style={{ marginTop: '28px', color: '#fff' }}>
+              <h3 style={{ fontSize: '0.7rem', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.1em', color: '#555', marginBottom: '14px' }}>Route Intelligence</h3>
 
+              {/* Status card */}
               {routeData.is_rerouted ? (
-                <div className="status-card status-card--danger" style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid #ef4444', padding: '15px', borderRadius: '6px', marginBottom: '20px' }}>
-                  <div className="status-label" style={{ color: '#ef4444', fontWeight: 'bold', marginBottom: '5px' }}>⚠️ Reroute Executed</div>
-                  <div style={{ fontSize: '0.85rem' }}>
-                    Direct path via {routeData.standard_route.path.join(' → ')} intercepted active
-                    threat zones. Rerouting via {routeData.safe_route.path.join(' → ')}.
+                <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.4)', padding: '14px', borderRadius: '8px', marginBottom: '16px' }}>
+                  <div style={{ color: '#ef4444', fontWeight: '700', fontSize: '0.85rem', marginBottom: '6px' }}>⚠️ Reroute Executed</div>
+                  <div style={{ fontSize: '0.8rem', color: '#fca5a5', lineHeight: '1.5' }}>
+                    Direct path <span style={{ fontFamily: 'monospace' }}>{routeData.standard_route.path.join(' → ')}</span> intercepted active threat zones.<br />
+                    Rerouting via <span style={{ fontFamily: 'monospace', color: '#fff' }}>{routeData.safe_route.path.join(' → ')}</span>
                   </div>
+                  {routeData.safe_route.total_distance_km && (
+                    <div style={{ marginTop: '8px', fontSize: '0.75rem', color: '#6b7280' }}>
+                      Safe route distance: {routeData.safe_route.total_distance_km.toLocaleString()} km
+                    </div>
+                  )}
                 </div>
               ) : (
-                <div className="status-card status-card--clear" style={{ background: 'rgba(34, 197, 94, 0.1)', border: '1px solid #22c55e', padding: '15px', borderRadius: '6px', marginBottom: '20px' }}>
-                  <div className="status-label" style={{ color: '#22c55e', fontWeight: 'bold' }}>✅ Route Clear</div>
+                <div style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.35)', padding: '14px', borderRadius: '8px', marginBottom: '16px' }}>
+                  <div style={{ color: '#22c55e', fontWeight: '700', fontSize: '0.85rem' }}>✅ Route Clear</div>
+                  <div style={{ fontSize: '0.8rem', color: '#86efac', marginTop: '4px' }}>
+                    <span style={{ fontFamily: 'monospace' }}>{routeData.standard_route.path.join(' → ')}</span>
+                  </div>
+                  {routeData.standard_route.total_distance_km && (
+                    <div style={{ marginTop: '6px', fontSize: '0.75rem', color: '#6b7280' }}>
+                      Distance: {routeData.standard_route.total_distance_km.toLocaleString()} km
+                    </div>
+                  )}
                 </div>
               )}
 
-              <div className="glass-card glass-card--accent" style={{ background: '#111', border: '1px solid #444', padding: '15px', borderRadius: '6px', marginBottom: '20px', borderLeft: '3px solid #b700ff' }}>
-                <div className="glass-card-title" style={{ color: '#b700ff', fontWeight: 'bold', fontSize: '0.85rem', marginBottom: '8px' }}>🤖 AI Copilot Briefing</div>
+              {/* AI Copilot Briefing */}
+              <div style={{ background: '#111', border: '1px solid #2a2a2a', borderLeft: '3px solid #7c3aed', padding: '14px', borderRadius: '8px', marginBottom: '16px' }}>
+                <div style={{ color: '#a78bfa', fontWeight: '700', fontSize: '0.78rem', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>🤖 AI Copilot Briefing</div>
                 {isAiThinking ? (
-                  <div className="skeleton-pulse" style={{ height: '40px', width: '100%', background: '#2a2a2a', borderRadius: '4px' }} />
+                  <div className="skeleton-pulse" style={{ height: '48px', background: '#1e1e1e', borderRadius: '4px' }} />
                 ) : (
-                  <div className="glass-card-body" style={{ fontSize: '0.85rem', color: '#ccc', lineHeight: '1.4' }}>
+                  <div style={{ fontSize: '0.82rem', color: '#c4b5fd', lineHeight: '1.55' }}>
                     {aiBriefing || 'Standing by for route vectors.'}
                   </div>
                 )}
               </div>
 
-              <h4 className="matrix-title" style={{ color: '#aaa', marginBottom: '10px', fontSize: '0.9rem' }}>Threat Matrix (Simulated)</h4>
-              <div className="glass-card" style={{ background: '#1e1e1e', padding: '15px', borderRadius: '6px', fontSize: '0.85rem' }}>
-                <div className="threat-row" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <span>Geopolitical Risk</span>
-                  <span className="threat-value--warn" style={{ color: '#f59e0b' }}>72%</span>
+              {/* Real flights on this route (AviationStack) */}
+              {routeFlights.length > 0 && (
+                <div style={{ marginBottom: '16px' }}>
+                  <h4 style={{ fontSize: '0.7rem', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.1em', color: '#555', marginBottom: '10px' }}>
+                    Real Flights on Route ({routeFlights.length})
+                  </h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {routeFlights.slice(0, 6).map((f, i) => (
+                      <div key={i} style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '6px', padding: '10px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                          <span style={{ color: '#38bdf8', fontWeight: '700', fontFamily: 'monospace', fontSize: '0.85rem' }}>{f.flight_number}</span>
+                          <span style={{
+                            color: statusColor(f.status),
+                            background: `${statusColor(f.status)}15`,
+                            border: `1px solid ${statusColor(f.status)}40`,
+                            padding: '1px 7px', borderRadius: '4px',
+                            fontSize: '0.62rem', textTransform: 'uppercase', fontWeight: '700',
+                          }}>{f.status}</span>
+                        </div>
+                        <div style={{ color: '#94a3b8', fontSize: '0.78rem', marginBottom: '3px' }}>{f.airline}</div>
+                        <div style={{ color: '#475569', fontSize: '0.73rem' }}>
+                          {f.dep_scheduled ? new Date(f.dep_scheduled).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '–'}
+                          {' → '}
+                          {f.arr_scheduled ? new Date(f.arr_scheduled).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '–'}
+                        </div>
+                        {(f.dep_delay > 0 || f.arr_delay > 0) && (
+                          <div style={{ marginTop: '4px', color: '#f59e0b', fontSize: '0.7rem' }}>
+                            ⏱ {f.dep_delay ? `DEP +${f.dep_delay}min` : ''}{f.arr_delay ? ` ARR +${f.arr_delay}min` : ''}
+                          </div>
+                        )}
+                        {f.gate && (
+                          <div style={{ marginTop: '2px', color: '#334155', fontSize: '0.7rem' }}>Gate {f.gate}{f.terminal ? ` · T${f.terminal}` : ''}</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <div className="threat-row" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <span>Aviation Weather</span>
-                  <span className="threat-value--low" style={{ color: '#22c55e' }}>12%</span>
-                </div>
-                <div className="threat-row" style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Civil Unrest</span>
-                  <span className="threat-value--low" style={{ color: '#22c55e' }}>16%</span>
+              )}
+
+              {/* Threat matrix */}
+              <div>
+                <h4 style={{ fontSize: '0.7rem', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.1em', color: '#555', marginBottom: '10px' }}>Threat Matrix</h4>
+                <div style={{ background: '#111', border: '1px solid #1e1e1e', borderRadius: '8px', padding: '14px', fontSize: '0.82rem' }}>
+                  {[['Geopolitical Risk', '72%', '#f59e0b'], ['Aviation Weather', '12%', '#22c55e'], ['Civil Unrest', '16%', '#22c55e']].map(([label, val, color]) => (
+                    <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: label === 'Civil Unrest' ? 0 : '10px' }}>
+                      <span style={{ color: '#888' }}>{label}</span>
+                      <span style={{ color, fontWeight: '700' }}>{val}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
@@ -161,93 +239,87 @@ export default function App() {
         </div>
       </aside>
 
-      {/* FIXED MAP WRAPPER: Ensures Leaflet doesn't crash to 0px height */}
-      <div className="map-wrapper" style={{ flex: 1, position: 'relative', height: '100vh', background: '#0a0a0a' }}>
-        <MapContainer 
-          center={[20.0, 30.0]} 
-          zoom={3} 
-          minZoom={2} 
-          maxBounds={[[-85, -180], [85, 180]]} // Safe bounds that prevent the map from crashing
-          maxBoundsViscosity={1.0} 
-          style={{ width: '100%', height: '100vh' }} // Forces Leaflet canvas to render at full height
+      {/* ── MAP ── */}
+      <div style={{ flex: 1, position: 'relative', height: '100vh' }}>
+        <MapContainer
+          center={[25.0, 70.0]}
+          zoom={3}
+          minZoom={2}
+          maxBounds={[[-85, -180], [85, 180]]}
+          maxBoundsViscosity={1.0}
+          style={{ width: '100%', height: '100vh' }}
         >
-          <TileLayer 
-            url="https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png" 
-            noWrap={true} 
+          <TileLayer
+            url="https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png"
+            noWrap={true}
           />
 
+          {/* Danger zones */}
           {dangerZones.map((zone) => (
             <GeoJSON
               key={zone.id}
               data={zone.boundary}
-              style={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.25, weight: 2 }}
+              style={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.18, weight: 1.5 }}
             >
               <Popup>
-                <div className="popup-title" style={{ color: '#ef4444', fontWeight: 'bold' }}>🚨 HIGH RISK ZONE</div>
-                <hr className="popup-divider" style={{ borderTop: '1px solid #ccc', margin: '8px 0' }} />
-                <div className="popup-meta" style={{ fontSize: '0.9rem', fontFamily: 'system-ui' }}>
-                  <b>Source:</b> {zone.source}
-                  <br />
-                  <b>Status:</b> Active
-                  <div className="popup-desc" style={{ marginTop: '5px', color: '#555' }}>{zone.description}</div>
+                <div style={{ fontFamily: 'system-ui' }}>
+                  <div style={{ color: '#ef4444', fontWeight: 'bold', marginBottom: '4px' }}>🚨 {zone.source}</div>
+                  <div style={{ fontSize: '0.85rem', color: '#555' }}>{zone.description}</div>
                 </div>
               </Popup>
             </GeoJSON>
           ))}
 
+          {/* Blocked direct path (red dashed) */}
           {standardPathCoords.length > 0 && routeData?.is_rerouted && (
-            <Polyline
-              positions={standardPathCoords}
-              color="#ef4444"
-              weight={3}
-              dashArray="5, 10"
-              opacity={0.4}
-            />
+            <Polyline positions={standardPathCoords} color="#ef4444" weight={2} dashArray="6, 10" opacity={0.45} />
           )}
 
+          {/* Safe rerouted path (blue solid) */}
           {safePathCoords.length > 0 && (
-            <Polyline
-              positions={safePathCoords}
-              color="#3b82f6"
-              weight={4}
-              opacity={0.9}
-              pathOptions={{ className: 'animated-path' }}
-            />
+            <Polyline positions={safePathCoords} color="#3b82f6" weight={3.5} opacity={0.9} pathOptions={{ className: 'animated-path' }} />
           )}
 
+          {/* Airports */}
           {airports.map((airport) => (
             <CircleMarker
               key={airport.id}
               center={[airport.lat, airport.lon]}
-              radius={airport.risk_level === 'High' ? 30 : 15}
+              radius={airport.risk_level === 'High' ? 10 : 6}
               pathOptions={{
-                color: airport.risk_level === 'High' ? '#ef4444' : '#22c55e',
-                fillOpacity: 0.15,
+                color: airport.risk_level === 'High' ? '#ef4444' : airport.risk_level === 'Medium' ? '#f59e0b' : '#22c55e',
+                fillOpacity: 0.2,
+                weight: 1.5,
               }}
             >
               <Popup>
-                <b className="popup-airport-name">{airport.name}</b>
-                <br />
-                <span className="popup-meta">Status: {airport.risk_level} Risk</span>
+                <div style={{ fontFamily: 'system-ui' }}>
+                  <b>{airport.name}</b><br />
+                  <span style={{ fontSize: '0.85rem', color: '#555' }}>{airport.iata_code} · {airport.risk_level} Risk</span>
+                  {airport.risk_description && (
+                    <div style={{ marginTop: '4px', fontSize: '0.8rem', color: '#888' }}>{airport.risk_description}</div>
+                  )}
+                </div>
               </Popup>
             </CircleMarker>
           ))}
         </MapContainer>
 
-        <div className="risk-legend" style={{ position: 'absolute', bottom: '20px', right: '20px', zIndex: 1000, background: 'rgba(20,20,20,0.9)', padding: '15px', borderRadius: '8px', border: '1px solid #333', fontSize: '0.8rem', color: '#fff', fontFamily: 'system-ui' }}>
-          <strong style={{ display: 'block', marginBottom: '10px' }}>Risk Legend</strong>
-          <div className="legend-item" style={{ display: 'flex', alignItems: 'center', marginBottom: '5px' }}>
-            <span className="legend-swatch legend-swatch--zone" style={{ width: '12px', height: '12px', background: '#ef4444', display: 'inline-block', marginRight: '8px', opacity: 0.5 }} />
-            Conflict Zone (No-Fly)
-          </div>
-          <div className="legend-item" style={{ display: 'flex', alignItems: 'center', marginBottom: '5px' }}>
-            <span className="legend-swatch legend-swatch--blocked" style={{ width: '12px', height: '3px', background: '#ef4444', display: 'inline-block', marginRight: '8px' }} />
-            Blocked Direct Path
-          </div>
-          <div className="legend-item" style={{ display: 'flex', alignItems: 'center' }}>
-            <span className="legend-swatch legend-swatch--route" style={{ width: '12px', height: '3px', background: '#3b82f6', display: 'inline-block', marginRight: '8px' }} />
-            Active Radar Route
-          </div>
+        {/* Legend */}
+        <div style={{ position: 'absolute', bottom: '20px', right: '20px', zIndex: 1000, background: 'rgba(13,13,13,0.92)', padding: '14px', borderRadius: '8px', border: '1px solid #222', fontSize: '0.75rem', color: '#fff', fontFamily: 'system-ui', backdropFilter: 'blur(6px)' }}>
+          <strong style={{ display: 'block', marginBottom: '10px', color: '#aaa', textTransform: 'uppercase', fontSize: '0.65rem', letterSpacing: '0.08em' }}>Legend</strong>
+          {[
+            [<span style={{ width: '12px', height: '12px', background: '#ef4444', display: 'inline-block', opacity: 0.5 }} />, 'Conflict / No-Fly Zone'],
+            [<span style={{ width: '12px', height: '3px', background: '#ef4444', display: 'inline-block' }} />, 'Blocked Direct Path'],
+            [<span style={{ width: '12px', height: '3px', background: '#3b82f6', display: 'inline-block' }} />, 'Safe Rerouted Path'],
+            [<span style={{ width: '10px', height: '10px', borderRadius: '50%', border: '1.5px solid #22c55e', display: 'inline-block' }} />, 'Airport (Low Risk)'],
+            [<span style={{ width: '10px', height: '10px', borderRadius: '50%', border: '1.5px solid #ef4444', display: 'inline-block' }} />, 'Airport (High Risk)'],
+          ].map(([icon, label], i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: i < 4 ? '6px' : 0 }}>
+              {icon}
+              <span style={{ color: '#aaa' }}>{label}</span>
+            </div>
+          ))}
         </div>
       </div>
     </div>
