@@ -1,21 +1,28 @@
 import { useState } from 'react';
 
-export default function SearchPanel({ airports, onRouteSelect }) {
+export default function SearchPanel({ airports, onRouteSelect, busy }) {
   const [origin, setOrigin] = useState('');
   const [destination, setDestination] = useState('');
 
+  const same = origin && origin === destination;
+  const ready = origin && destination && !same && !busy;
+
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (origin && destination) {
-      onRouteSelect(origin, destination);
-    }
+    if (ready) onRouteSelect(origin, destination);
   };
+
+  const options = airports.map((a) => (
+    <option key={a.id} value={a.iata_code}>
+      {a.iata_code} — {a.name}
+    </option>
+  ));
 
   return (
     <div className="search-panel">
       <form onSubmit={handleSubmit}>
         <div>
-          <label className="field-label" htmlFor="origin-select">Origin Waypoint</label>
+          <label className="field-label" htmlFor="origin-select">Origin</label>
           <div className="select-wrapper">
             <select
               id="origin-select"
@@ -23,18 +30,14 @@ export default function SearchPanel({ airports, onRouteSelect }) {
               value={origin}
               onChange={(e) => setOrigin(e.target.value)}
             >
-              <option value="">Select Airport…</option>
-              {airports.map((a) => (
-                <option key={a.id} value={a.iata_code}>
-                  {a.iata_code} — {a.name}
-                </option>
-              ))}
+              <option value="">Select airport…</option>
+              {options}
             </select>
           </div>
         </div>
 
         <div>
-          <label className="field-label" htmlFor="dest-select">Target Destination</label>
+          <label className="field-label" htmlFor="dest-select">Destination</label>
           <div className="select-wrapper">
             <select
               id="dest-select"
@@ -42,18 +45,16 @@ export default function SearchPanel({ airports, onRouteSelect }) {
               value={destination}
               onChange={(e) => setDestination(e.target.value)}
             >
-              <option value="">Select Airport…</option>
-              {airports.map((a) => (
-                <option key={a.id} value={a.iata_code}>
-                  {a.iata_code} — {a.name}
-                </option>
-              ))}
+              <option value="">Select airport…</option>
+              {options}
             </select>
           </div>
         </div>
 
-        <button type="submit" className="trajectory-btn">
-          Compute Optimal Trajectory
+        {same && <p className="field-error">Origin and destination must differ.</p>}
+
+        <button type="submit" className="compute-btn" disabled={!ready}>
+          {busy ? 'Computing…' : 'Compute route'}
         </button>
       </form>
     </div>
