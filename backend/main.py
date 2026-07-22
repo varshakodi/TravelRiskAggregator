@@ -10,10 +10,10 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from database import SessionLocal
 from services.pathfinder import calculate_route_comparison
-from services.ai_service import generate_threat_briefing
-from workers.aviation_worker import fetch_aviation_weather_alerts
-from workers.data_ingestion import fetch_live_risk_data
+from services.ai_service import briefing_from_comparison
 from workers.live_flights_worker import fetch_all_live_flights, fetch_route_flights
+from workers.quake_worker import fetch_quakes
+from workers.sigmet_worker import fetch_sigmets
 from workers.zone_sweep import sweep_expired_zones
 
 # Schema is owned by Alembic (`alembic upgrade head`) — the app no longer
@@ -22,15 +22,16 @@ from workers.zone_sweep import sweep_expired_zones
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # -- startup: the ingestion pipelines are idempotent now (upserts keyed
-    # on external_id), so the scheduler is safe to run — re-firing a job
-    # updates rows in place instead of piling up duplicates.
+    # -- startup: LIVE feeds (AWC SIGMETs + USGS quakes), safe to re-fire
+    # because ingestion is idempotent (upserts keyed on external_id).
+    # SIGMETs refresh often (typically 4h validity windows); quakes are a
+    # daily-window feed; the sweep retires whatever has expired.
     scheduler = BackgroundScheduler()
-    scheduler.add_job(fetch_live_risk_data, "interval", minutes=5)
-    scheduler.add_job(fetch_aviation_weather_alerts, "interval", minutes=5)
+    scheduler.add_job(fetch_sigmets, "interval", minutes=10)
+    scheduler.add_job(fetch_quakes, "interval", minutes=15)
     scheduler.add_job(sweep_expired_zones, "interval", minutes=10)
     scheduler.start()
-    print("[Engine] Ingestion + expiry sweep scheduled (idempotent upserts).")
+    print("[Engine] Live ingestion scheduled: AWC SIGMETs, USGS quakes, expiry sweep.")
     yield
     # -- shutdown: stop cleanly so no job is left mid-flight.
     scheduler.shutdown(wait=False)
@@ -88,24 +89,19 @@ def calculate_route(req: RouteRequest, db: Session = Depends(get_db)):
     return result
 
 class BriefingRequest(BaseModel):
+    # Clients send identifiers only; the server recomputes the route and owns
+    # every fact that reaches the LLM prompt (prompt-injection hardening —
+    # previously the client posted the route arrays back and we prompted
+    # with them verbatim).
     origin: str
     destination: str
-    standard_route: list
-    safe_route: list
-    status: str
-    zones_crossed: list = []
 
 @app.post("/api/route/briefing")
-def get_ai_briefing(req: BriefingRequest):
-    briefing = generate_threat_briefing(
-        req.origin,
-        req.destination,
-        req.standard_route,
-        req.safe_route,
-        req.status,
-        req.zones_crossed,
-    )
-    return {"briefing": briefing}
+def get_ai_briefing(req: BriefingRequest, db: Session = Depends(get_db)):
+    comparison = calculate_route_comparison(db, req.origin, req.destination)
+    if not comparison["standard_route"]:
+        raise HTTPException(status_code=404, detail="No route exists between these airports.")
+    return {"briefing": briefing_from_comparison(req.origin, req.destination, comparison)}
 
 
 @app.get("/api/live-flights")

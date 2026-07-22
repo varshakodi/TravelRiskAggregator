@@ -15,13 +15,20 @@ custom Dijkstra implementation to route around it.
 
 ## What it does
 
-1. Pick an origin and destination from 36 seeded global airport hubs.
-2. The backend runs Dijkstra twice — once ignoring risk, once penalizing
-   edges that intersect a danger zone polygon — and returns both paths.
+1. Scheduled workers continuously ingest **live hazard data** — real
+   international SIGMET polygons (thunderstorms, volcanic ash, tropical
+   cyclones) from the Aviation Weather Center and M4.5+ earthquakes from
+   USGS — as time-bounded danger zones, alongside a few labeled seed
+   scenarios for a deterministic demo.
+2. Pick an origin and destination from 36 seeded global airport hubs. The
+   backend runs Dijkstra twice — once ignoring risk, once penalizing edges
+   whose geodesic path crosses an active zone — and returns both paths with
+   an honest verdict (CLEAR / REROUTED / NO_SAFE_PATH).
 3. The frontend renders both on a dark-mode Leaflet map: the blocked direct
-   path (dashed red) and the safe rerouted path (solid blue), plus a live
-   AI-generated briefing and real scheduled flights on the route
-   (AviationStack) fetched for context.
+   path (dashed red), the safe rerouted path (solid blue), a per-corridor
+   threat breakdown computed from the actual zones involved, an
+   AI-generated briefing built from server-derived facts, and real
+   scheduled flights on the route (AviationStack).
 
 ## Architecture
 
@@ -61,8 +68,9 @@ flowchart LR
 | Database | PostgreSQL + PostGIS (`POINT` airports, `POLYGON` danger zones, GIST spatial indexes) |
 | Routing | Hand-rolled Dijkstra (`backend/services/pathfinder.py`) over geodesic zone intersections computed in PostGIS |
 | Ingestion | APScheduler workers with idempotent upserts (`ON CONFLICT external_id DO UPDATE`) + zone expiry sweep |
-| Live data | OpenSky Network (aircraft positions), AviationStack (scheduled flights) |
-| AI | OpenAI-generated route briefing, with a deterministic offline fallback when no API key is set |
+| Hazard feeds | **AWC international SIGMETs** (live hazard polygons, no key) + **USGS M4.5+ earthquakes** (live GeoJSON, no key) |
+| Live data | OpenSky Network (aircraft positions, TTL-cached 30s), AviationStack (scheduled flights, TTL-cached 6h) |
+| AI | LLM route briefing built from server-derived facts only (model via `OPENAI_MODEL`, 10s timeout, cached), deterministic offline fallback when no API key is set |
 
 ## How routing works
 
@@ -138,20 +146,22 @@ flights on the selected route. OpenSky aircraft positions work with no key.
 
 Being upfront about the current state rather than overselling it:
 
-- **Ingestion feeds are simulated.** The scheduled workers in
-  `backend/workers/` run for real (idempotent upserts, expiry sweep), but
-  the events they ingest are hardcoded and honestly labeled "(Simulated)".
-  Wiring real feeds (AWC SIGMETs, USGS, GDELT) is the next milestone.
+- **The routing model is 2D and binary.** Real dispatchers route around
+  weather with altitude changes and departure timing; this model treats a
+  zone crossing as a flat penalty. When the tropical thunderstorm belt is
+  carpeted in SIGMETs (most days), many equatorial corridors honestly
+  report `NO_SAFE_PATH` where a real airline would fly over or wait out
+  the cell. Severity thresholds / vertical awareness are future work.
+- **SIGMET polygons spanning the antimeridian** (±180° longitude) are
+  stored as-is and may render or intersect oddly.
 - **No automated tests yet.** `backend/test_route.py` is a manual smoke
   script, not a test suite; verification so far has been live end-to-end
   checks.
-- **The frontend "Threat Matrix" percentages are hardcoded** display
-  values, not computed from route data yet.
 - **No auth or rate limiting** on the API.
 
 ## Roadmap
 
 1. ~~Explicit route-safety verdict + geodesic zone intersection + severity-weighted scoring~~ ✅
 2. ~~Alembic migrations, foreign keys, idempotent zone ingestion → scheduled updates re-enabled~~ ✅
-3. Live SIGMET/earthquake/conflict feeds, hardened AI briefing
+3. ~~Live SIGMET/earthquake feeds, computed threat matrix, hardened AI briefing, TTL caching~~ ✅
 4. Tests, CI, Docker, deployed demo

@@ -24,8 +24,12 @@ EDGE_QUERY = text("""
         fe.base_distance_km,
         COALESCE(SUM(dz.risk_level), 0) AS zone_risk,
         COALESCE(
-            array_agg(dz.description) FILTER (WHERE dz.id IS NOT NULL),
-            '{}'
+            json_agg(json_build_object(
+                'source', dz.source_event,
+                'description', dz.description,
+                'severity', dz.risk_level
+            )) FILTER (WHERE dz.id IS NOT NULL),
+            '[]'
         ) AS zones_crossed
     FROM flight_edges fe
     JOIN airports a1 ON a1.iata_code = fe.source_iata
@@ -127,4 +131,37 @@ def calculate_route_comparison(db: Session, origin_iata: str, dest_iata: str):
         "safe_route": safe_route,
         "status": status,
         "zones_crossed": zones_crossed,
+        # The threats relevant to this corridor = whatever the DIRECT path
+        # crosses (that's what forced a reroute, or would have).
+        "threat_breakdown": compute_threat_breakdown(standard_route["zones_crossed"]),
     }
+
+
+# Source feed -> display category. New feeds slot in here.
+_CATEGORY_BY_SOURCE = [
+    ("Geopolitical", "Geopolitical"),
+    ("SIGMET", "Aviation Weather"),
+    ("Weather", "Aviation Weather"),
+    ("Seismic", "Seismic"),
+]
+
+
+def compute_threat_breakdown(zones: list) -> list:
+    """
+    Per-corridor threat composition, replacing the UI's old hardcoded
+    percentages: group the corridor's zones by category, weight by severity,
+    normalize to shares of 100. Every number traces back to actual zones.
+    """
+    totals: dict = {}
+    for z in zones:
+        source = z.get("source", "")
+        category = next((cat for key, cat in _CATEGORY_BY_SOURCE if key in source), "Other")
+        totals[category] = totals.get(category, 0) + (z.get("severity") or 0)
+
+    grand_total = sum(totals.values())
+    if not grand_total:
+        return []
+    return [
+        {"category": cat, "share_pct": round(100 * sev / grand_total), "severity_sum": sev}
+        for cat, sev in sorted(totals.items(), key=lambda kv: -kv[1])
+    ]

@@ -59,43 +59,31 @@ export default function App() {
     setAiBriefing(null);
     setRouteFlights([]);
 
-    const timer = setTimeout(() => {
-      axios
-        .post('http://localhost:8000/api/route/calculate', activeRouteParams)
-        .then((response) => {
-          setRouteData(response.data);
+    axios
+      .post('http://localhost:8000/api/route/calculate', activeRouteParams)
+      .then((response) => {
+        setRouteData(response.data);
 
-          // Fetch real scheduled flights for this route from AviationStack
-          axios
-            .get(`http://localhost:8000/api/live-flights/${activeRouteParams.origin}/${activeRouteParams.destination}`)
-            .then((res) => { if (res.data?.flights) setRouteFlights(res.data.flights); })
-            .catch(() => {});
+        // Fetch real scheduled flights for this route from AviationStack
+        axios
+          .get(`http://localhost:8000/api/live-flights/${activeRouteParams.origin}/${activeRouteParams.destination}`)
+          .then((res) => { if (res.data?.flights) setRouteFlights(res.data.flights); })
+          .catch(() => {});
 
-          setIsAiThinking(true);
-          axios
-            .post('http://localhost:8000/api/route/briefing', {
-              origin:         activeRouteParams.origin,
-              destination:    activeRouteParams.destination,
-              standard_route: response.data.standard_route.path,
-              safe_route:     response.data.safe_route.path,
-              status:         response.data.status,
-              // REROUTED: the safe route's zones_crossed is empty by definition
-              // (that's what makes it safe) — the briefing needs what the
-              // *blocked* direct route hit instead. NO_SAFE_PATH: the top-level
-              // field already reflects what the lowest-risk option still crosses.
-              zones_crossed:  response.data.status === 'REROUTED'
-                ? response.data.standard_route.zones_crossed
-                : response.data.zones_crossed,
-            })
-            .then((aiRes) => setAiBriefing(aiRes.data.briefing))
-            .catch((err) => console.error('AI Error:', err))
-            .finally(() => setIsAiThinking(false));
-        })
-        .catch(() => alert('No clear path mapped.'))
-        .finally(() => setIsAnalyzing(false));
-    }, 800);
-
-    return () => clearTimeout(timer);
+        // The server recomputes the route and owns every fact that reaches
+        // the AI prompt — the client only says which route to brief.
+        setIsAiThinking(true);
+        axios
+          .post('http://localhost:8000/api/route/briefing', {
+            origin:      activeRouteParams.origin,
+            destination: activeRouteParams.destination,
+          })
+          .then((aiRes) => setAiBriefing(aiRes.data.briefing))
+          .catch((err) => console.error('AI Error:', err))
+          .finally(() => setIsAiThinking(false));
+      })
+      .catch(() => alert('No clear path mapped.'))
+      .finally(() => setIsAnalyzing(false));
   }, [activeRouteParams]);
 
   if (loading) {
@@ -160,7 +148,7 @@ export default function App() {
                   </div>
                   {routeData.zones_crossed?.length > 0 && (
                     <div style={{ marginTop: '8px', fontSize: '0.75rem', color: '#d97706' }}>
-                      Crosses: {routeData.zones_crossed.join('; ')}
+                      Crosses: {routeData.zones_crossed.map((z) => z.description).join('; ')}
                     </div>
                   )}
                 </div>
@@ -242,16 +230,22 @@ export default function App() {
                 </div>
               )}
 
-              {/* Threat matrix */}
+              {/* Threat matrix — computed per-corridor by the backend from the
+                  zones the direct path crosses (severity-weighted shares),
+                  replacing the old hardcoded placeholder percentages. */}
               <div>
-                <h4 style={{ fontSize: '0.7rem', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.1em', color: '#555', marginBottom: '10px' }}>Threat Matrix</h4>
+                <h4 style={{ fontSize: '0.7rem', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.1em', color: '#555', marginBottom: '10px' }}>Threat Matrix — This Corridor</h4>
                 <div style={{ background: '#111', border: '1px solid #1e1e1e', borderRadius: '8px', padding: '14px', fontSize: '0.82rem' }}>
-                  {[['Geopolitical Risk', '72%', '#f59e0b'], ['Aviation Weather', '12%', '#22c55e'], ['Civil Unrest', '16%', '#22c55e']].map(([label, val, color]) => (
-                    <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: label === 'Civil Unrest' ? 0 : '10px' }}>
-                      <span style={{ color: '#888' }}>{label}</span>
-                      <span style={{ color, fontWeight: '700' }}>{val}</span>
-                    </div>
-                  ))}
+                  {routeData.threat_breakdown?.length > 0 ? (
+                    routeData.threat_breakdown.map((t, i) => (
+                      <div key={t.category} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: i === routeData.threat_breakdown.length - 1 ? 0 : '10px' }}>
+                        <span style={{ color: '#888' }}>{t.category}</span>
+                        <span style={{ color: t.share_pct >= 50 ? '#ef4444' : t.share_pct >= 25 ? '#f59e0b' : '#22c55e', fontWeight: '700' }}>{t.share_pct}%</span>
+                      </div>
+                    ))
+                  ) : (
+                    <span style={{ color: '#4ade80' }}>No active threats on this corridor.</span>
+                  )}
                 </div>
               </div>
             </div>

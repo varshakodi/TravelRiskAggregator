@@ -2,10 +2,16 @@
 Live flight data integration:
 - AviationStack API: Real scheduled/active flight data (airline, status, delays) per route
 - OpenSky Network: Real-time aircraft positions for the global map overlay (free, no auth)
+
+Both are TTL-cached (services/cache.py). TTLs follow each dataset's tempo:
+aircraft positions move in seconds -> 30s; airline schedules barely change
+intra-day, and the free tier is ~100 requests/MONTH -> 6 hours.
 """
 import os
 import requests
 from typing import Optional
+
+from services.cache import ttl_cache
 
 AVIATIONSTACK_KEY = os.getenv("AVIATIONSTACK_KEY", "")
 AVIATIONSTACK_BASE = "http://api.aviationstack.com/v1"
@@ -36,10 +42,12 @@ OPENSKY_FIELDS = [
 ]
 
 
+@ttl_cache(seconds=30)
 def fetch_opensky_positions() -> list:
     """
     Fetches real-time aircraft positions from OpenSky Network (free, no auth).
     Returns aircraft currently airborne over major flight corridors.
+    Cached 30s: fresh enough for a moving map, frugal with OpenSky credits.
     """
     try:
         resp = requests.get(
@@ -91,10 +99,13 @@ def fetch_opensky_positions() -> list:
         return []
 
 
+@ttl_cache(seconds=6 * 3600)
 def fetch_route_flights(dep_iata: str, arr_iata: str, limit: int = 10) -> list:
     """
     Fetches real flight schedule/status data for a specific route from AviationStack.
     Returns actual airline names, flight numbers, schedules and delays.
+    Cached 6h per route: the free tier allows ~100 requests/MONTH — without
+    this, three curious visitors could exhaust the entire month's budget.
     """
     if not AVIATIONSTACK_KEY:
         return []
