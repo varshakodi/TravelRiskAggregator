@@ -8,7 +8,7 @@ class Airport(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
     iata_code = Column(String, unique=True, index=True, nullable=False)
-    location = Column(Geometry(geometry_type='POINT', srid=4326), nullable=False)
+    location = Column(Geometry(geometry_type='POINT', srid=4326, spatial_index=True), nullable=False)
     risk_level = Column(String, nullable=False)  # "Low", "Medium", "High"
     risk_description = Column(String, nullable=True)
     severity_index = Column(Float, default=1.0)
@@ -29,4 +29,4 @@ class DangerZone(Base):
     source_event = Column(String, nullable=False)
     description = Column(String, nullable=False)
     risk_level = Column(Integer, default=10)
-    boundary = Column(Geometry(geometry_type='POLYGON', srid=4326), nullable=False)
+    boundary = Column(Geometry(geometry_type='POLYGON', srid=4326, spatial_index=True), nullable=False)

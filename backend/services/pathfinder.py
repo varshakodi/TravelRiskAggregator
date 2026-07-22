@@ -1,60 +1,123 @@
 import heapq
+
+from sqlalchemy import text
 from sqlalchemy.orm import Session
-from shapely.wkb import loads
-from shapely.geometry import LineString
-from models import FlightEdge, Airport, DangerZone
 
-def run_dijkstra(db: Session, origin_iata: str, dest_iata: str, ignore_risk: bool = False):
-    edges = db.query(FlightEdge).all()
-    
-    # Load airports into a dict of {iata_code: shapely.geometry.Point}
-    # and danger zones into a list of shapely.geometry.Polygon
-    airports = {a.iata_code: loads(bytes(a.location.data)) for a in db.query(Airport).all()}
-    danger_zones = [loads(bytes(dz.boundary.data)) for dz in db.query(DangerZone).all()]
+# Multiplier applied per unit of summed zone risk_level. Chosen so that even
+# the lowest-severity seeded zone (risk_level=8) makes an edge more expensive
+# than any real detour in this graph (edges: ~300-6500km, worst-case full
+# detour: ~20,000km) — i.e. Dijkstra always prefers a clear detour when one
+# exists, and only ranks by severity when forced to pick among unsafe options.
+RISK_LAMBDA = 100
 
+# One query replaces three (edges / airports / zones) plus the old O(edges x
+# zones) Shapely loop. The ::geography cast is the correctness fix: it makes
+# ST_Intersects treat the segment between two airports as a geodesic arc
+# (the real flight path), instead of a straight line in raw lon/lat space,
+# which is what both the old Shapely LineString and a plain ::geometry
+# comparison do. FILTER excludes the LEFT JOIN's null row so a
+# non-intersecting edge gets zone_risk=0 and zones_crossed=[], not [NULL].
+EDGE_QUERY = text("""
+    SELECT
+        fe.source_iata,
+        fe.dest_iata,
+        fe.base_distance_km,
+        COALESCE(SUM(dz.risk_level), 0) AS zone_risk,
+        COALESCE(
+            array_agg(dz.description) FILTER (WHERE dz.id IS NOT NULL),
+            '{}'
+        ) AS zones_crossed
+    FROM flight_edges fe
+    JOIN airports a1 ON a1.iata_code = fe.source_iata
+    JOIN airports a2 ON a2.iata_code = fe.dest_iata
+    LEFT JOIN danger_zones dz
+        ON ST_Intersects(
+            ST_MakeLine(a1.location, a2.location)::geography,
+            dz.boundary::geography
+        )
+    GROUP BY fe.id, fe.source_iata, fe.dest_iata, fe.base_distance_km
+""")
+
+
+def _load_graph(db: Session):
+    """Fetch every edge once, pre-annotated with which zones it crosses."""
+    rows = db.execute(EDGE_QUERY).fetchall()
     graph = {}
-    
-    for edge in edges:
-        if edge.source_iata not in graph: graph[edge.source_iata] = []
-        if edge.dest_iata not in graph: graph[edge.dest_iata] = []
-        
-        # Calculate dynamic spatial intersection risk
-        intersection_penalty = 0.0
-        if not ignore_risk and edge.source_iata in airports and edge.dest_iata in airports:
-            pt1 = airports[edge.source_iata]
-            pt2 = airports[edge.dest_iata]
-            line = LineString([pt1, pt2])
-            for dz in danger_zones:
-                if line.intersects(dz):
-                    intersection_penalty += 10000.0  # Massive penalty for crossing a danger zone
+    for r in rows:
+        weighted_km = r.base_distance_km * (1 + RISK_LAMBDA * r.zone_risk)
+        forward = (r.dest_iata, r.base_distance_km, weighted_km, r.zones_crossed)
+        backward = (r.source_iata, r.base_distance_km, weighted_km, r.zones_crossed)
+        graph.setdefault(r.source_iata, []).append(forward)
+        graph.setdefault(r.dest_iata, []).append(backward)
+    return graph
 
-        penalty_weight = edge.base_distance_km if ignore_risk else edge.base_distance_km + (edge.route_risk_modifier * 1000.0) + intersection_penalty
-        
-        graph[edge.source_iata].append((edge.dest_iata, penalty_weight, edge.base_distance_km))
-        graph[edge.dest_iata].append((edge.source_iata, penalty_weight, edge.base_distance_km))
-    
-    queue = [(0.0, origin_iata, [origin_iata], 0.0)]
+
+def _dijkstra(graph, origin_iata: str, dest_iata: str, ignore_risk: bool):
+    # (cost, node, path, actual_dist, zones_crossed) — same lazy-deletion
+    # Dijkstra as before; each popped state now also carries the union of
+    # zones crossed to reach it, so the winner's zones_crossed is known
+    # the moment we pop the destination, with no separate re-walk needed.
+    queue = [(0.0, origin_iata, [origin_iata], 0.0, [])]
     seen = set()
-    
+
     while queue:
-        weighted_cost, node, path, actual_dist = heapq.heappop(queue)
-        if node in seen: continue
+        cost, node, path, actual_dist, zones_hit = heapq.heappop(queue)
+        if node in seen:
+            continue
         seen.add(node)
-        
+
         if node == dest_iata:
-            return {"path": path, "total_distance_km": round(actual_dist, 2)}
-            
-        for next_node, penalty_cost, base_dist in graph.get(node, []):
-            if next_node not in seen:
-                heapq.heappush(queue, (weighted_cost + penalty_cost, next_node, path + [next_node], actual_dist + base_dist))
+            return {
+                "path": path,
+                "total_distance_km": round(actual_dist, 2),
+                "zones_crossed": zones_hit,
+            }
+
+        for next_node, base_dist, weighted_km, edge_zones in graph.get(node, []):
+            if next_node in seen:
+                continue
+            step_cost = base_dist if ignore_risk else weighted_km
+            new_zones = zones_hit + [z for z in edge_zones if z not in zones_hit]
+            heapq.heappush(
+                queue,
+                (cost + step_cost, next_node, path + [next_node], actual_dist + base_dist, new_zones),
+            )
     return None
 
+
 def calculate_route_comparison(db: Session, origin_iata: str, dest_iata: str):
-    standard_route = run_dijkstra(db, origin_iata, dest_iata, ignore_risk=True)
-    safe_route = run_dijkstra(db, origin_iata, dest_iata, ignore_risk=False)
-    
+    graph = _load_graph(db)
+    standard_route = _dijkstra(graph, origin_iata, dest_iata, ignore_risk=True)
+    safe_route = _dijkstra(graph, origin_iata, dest_iata, ignore_risk=False)
+
+    if not standard_route or not safe_route:
+        # Both runs traverse the same graph edges (just different weights),
+        # so if one is unreachable, so is the other — this is "no route
+        # exists in the network," a connectivity fact the caller already
+        # 404s on. NOT the same thing as NO_SAFE_PATH, which means a route
+        # exists but every option crosses a zone — mislabeling this as
+        # NO_SAFE_PATH would conflate a graph-topology gap with a real
+        # safety failure.
+        return {
+            "standard_route": standard_route,
+            "safe_route": safe_route,
+            "status": None,
+            "zones_crossed": [],
+        }
+
+    # This is the actual bug fix: status comes from what the winning path
+    # crosses, never from whether standard_route and safe_route differ.
+    zones_crossed = safe_route["zones_crossed"]
+    if zones_crossed:
+        status = "NO_SAFE_PATH"
+    elif standard_route["path"] == safe_route["path"]:
+        status = "CLEAR"
+    else:
+        status = "REROUTED"
+
     return {
         "standard_route": standard_route,
         "safe_route": safe_route,
-        "is_rerouted": standard_route != safe_route if standard_route and safe_route else False
+        "status": status,
+        "zones_crossed": zones_crossed,
     }

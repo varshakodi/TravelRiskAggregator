@@ -78,7 +78,14 @@ export default function App() {
               destination:    activeRouteParams.destination,
               standard_route: response.data.standard_route.path,
               safe_route:     response.data.safe_route.path,
-              is_rerouted:    response.data.is_rerouted,
+              status:         response.data.status,
+              // REROUTED: the safe route's zones_crossed is empty by definition
+              // (that's what makes it safe) — the briefing needs what the
+              // *blocked* direct route hit instead. NO_SAFE_PATH: the top-level
+              // field already reflects what the lowest-risk option still crosses.
+              zones_crossed:  response.data.status === 'REROUTED'
+                ? response.data.standard_route.zones_crossed
+                : response.data.zones_crossed,
             })
             .then((aiRes) => setAiBriefing(aiRes.data.briefing))
             .catch((err) => console.error('AI Error:', err))
@@ -144,7 +151,20 @@ export default function App() {
               <h3 style={{ fontSize: '0.7rem', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.1em', color: '#555', marginBottom: '14px' }}>Route Intelligence</h3>
 
               {/* Status card */}
-              {routeData.is_rerouted ? (
+              {routeData.status === 'NO_SAFE_PATH' ? (
+                <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.4)', padding: '14px', borderRadius: '8px', marginBottom: '16px' }}>
+                  <div style={{ color: '#f59e0b', fontWeight: '700', fontSize: '0.85rem', marginBottom: '6px' }}>⚠️ No Fully Safe Route</div>
+                  <div style={{ fontSize: '0.8rem', color: '#fcd34d', lineHeight: '1.5' }}>
+                    Every available path crosses active threat airspace.<br />
+                    Lowest-risk option: <span style={{ fontFamily: 'monospace', color: '#fff' }}>{routeData.safe_route.path.join(' → ')}</span>
+                  </div>
+                  {routeData.zones_crossed?.length > 0 && (
+                    <div style={{ marginTop: '8px', fontSize: '0.75rem', color: '#d97706' }}>
+                      Crosses: {routeData.zones_crossed.join('; ')}
+                    </div>
+                  )}
+                </div>
+              ) : routeData.status === 'REROUTED' ? (
                 <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.4)', padding: '14px', borderRadius: '8px', marginBottom: '16px' }}>
                   <div style={{ color: '#ef4444', fontWeight: '700', fontSize: '0.85rem', marginBottom: '6px' }}>⚠️ Reroute Executed</div>
                   <div style={{ fontSize: '0.8rem', color: '#fca5a5', lineHeight: '1.5' }}>
@@ -271,7 +291,7 @@ export default function App() {
           ))}
 
           {/* Blocked direct path (red dashed) */}
-          {standardPathCoords.length > 0 && routeData?.is_rerouted && (
+          {standardPathCoords.length > 0 && routeData?.status && routeData.status !== 'CLEAR' && (
             <Polyline positions={standardPathCoords} color="#ef4444" weight={2} dashArray="6, 10" opacity={0.45} />
           )}
 

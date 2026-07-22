@@ -81,16 +81,18 @@ class BriefingRequest(BaseModel):
     destination: str
     standard_route: list
     safe_route: list
-    is_rerouted: bool
+    status: str
+    zones_crossed: list = []
 
 @app.post("/api/route/briefing")
 def get_ai_briefing(req: BriefingRequest):
     briefing = generate_threat_briefing(
-        req.origin, 
-        req.destination, 
-        req.standard_route, 
-        req.safe_route, 
-        req.is_rerouted
+        req.origin,
+        req.destination,
+        req.standard_route,
+        req.safe_route,
+        req.status,
+        req.zones_crossed,
     )
     return {"briefing": briefing}
 
