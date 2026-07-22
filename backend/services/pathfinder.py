@@ -116,15 +116,8 @@ def calculate_route_comparison(db: Session, origin_iata: str, dest_iata: str):
             "zones_crossed": [],
         }
 
-    # This is the actual bug fix: status comes from what the winning path
-    # crosses, never from whether standard_route and safe_route differ.
+    status = derive_status(standard_route, safe_route)
     zones_crossed = safe_route["zones_crossed"]
-    if zones_crossed:
-        status = "NO_SAFE_PATH"
-    elif standard_route["path"] == safe_route["path"]:
-        status = "CLEAR"
-    else:
-        status = "REROUTED"
 
     return {
         "standard_route": standard_route,
@@ -135,6 +128,23 @@ def calculate_route_comparison(db: Session, origin_iata: str, dest_iata: str):
         # crosses (that's what forced a reroute, or would have).
         "threat_breakdown": compute_threat_breakdown(standard_route["zones_crossed"]),
     }
+
+
+def derive_status(standard_route: dict, safe_route: dict) -> str:
+    """
+    The safety verdict. Pure function (no DB) so it's unit-testable.
+
+    This is the Phase 1 bug fix, isolated: status comes from what the
+    winning path ACTUALLY CROSSES, never from whether the two paths differ.
+    (The old logic inferred "safe alternative found" from path inequality —
+    when every option crossed a zone, it reported a green Route Clear
+    through active threat airspace.)
+    """
+    if safe_route["zones_crossed"]:
+        return "NO_SAFE_PATH"
+    if standard_route["path"] == safe_route["path"]:
+        return "CLEAR"
+    return "REROUTED"
 
 
 # Source feed -> display category. New feeds slot in here.

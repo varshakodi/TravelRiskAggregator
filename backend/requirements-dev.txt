@@ -1,0 +1,6 @@
+# Development/CI-only dependencies — never installed in production.
+-r requirements.txt
+
+pytest==8.4.2
+httpx==0.28.1     # required by FastAPI's TestClient
+ruff==0.14.5      # linter

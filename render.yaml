@@ -1,0 +1,18 @@
+# Render blueprint: creates the backend as an always-on web service
+# (required — APScheduler needs a long-running process, which is why the
+# backend can't live on serverless platforms like Vercel).
+services:
+  - type: web
+    name: risk-aggregator-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DATABASE_URL
+        sync: false   # paste your Supabase connection string in the dashboard
+      - key: ALLOWED_ORIGINS
+        sync: false   # your Vercel URL, e.g. https://your-app.vercel.app

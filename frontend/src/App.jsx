@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { MapContainer, TileLayer, Popup, CircleMarker, Polyline, GeoJSON } from 'react-leaflet';
-import axios from 'axios';
+import { api } from './api';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
@@ -39,8 +39,8 @@ export default function App() {
   // Initial data load
   useEffect(() => {
     Promise.all([
-      axios.get('http://localhost:8000/api/airports'),
-      axios.get('http://localhost:8000/api/danger-zones'),
+      api.get('/api/airports'),
+      api.get('/api/danger-zones'),
     ])
       .then(([airportsRes, zonesRes]) => {
         if (airportsRes.data?.airports) setAirports(airportsRes.data.airports);
@@ -59,22 +59,22 @@ export default function App() {
     setAiBriefing(null);
     setRouteFlights([]);
 
-    axios
-      .post('http://localhost:8000/api/route/calculate', activeRouteParams)
+    api
+      .post('/api/route/calculate', activeRouteParams)
       .then((response) => {
         setRouteData(response.data);
 
         // Fetch real scheduled flights for this route from AviationStack
-        axios
-          .get(`http://localhost:8000/api/live-flights/${activeRouteParams.origin}/${activeRouteParams.destination}`)
+        api
+          .get(`/api/live-flights/${activeRouteParams.origin}/${activeRouteParams.destination}`)
           .then((res) => { if (res.data?.flights) setRouteFlights(res.data.flights); })
           .catch(() => {});
 
         // The server recomputes the route and owns every fact that reaches
         // the AI prompt — the client only says which route to brief.
         setIsAiThinking(true);
-        axios
-          .post('http://localhost:8000/api/route/briefing', {
+        api
+          .post('/api/route/briefing', {
             origin:      activeRouteParams.origin,
             destination: activeRouteParams.destination,
           })

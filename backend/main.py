@@ -1,4 +1,5 @@
 import json
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Depends, HTTPException
@@ -39,10 +40,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# Which browser origins may call this API. Local dev by default; a deploy
+# sets ALLOWED_ORIGINS to its frontend URL(s), comma-separated. No cookies
+# are used, so allow_credentials stays off (the old "*" + credentials combo
+# is invalid per the CORS spec and browsers reject it when it matters).
+_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=[o.strip() for o in _origins],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -53,6 +59,16 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+@app.get("/health")
+def health(db: Session = Depends(get_db)):
+    """Liveness probe for deploy platforms + a tiny data sanity signal."""
+    zones = db.execute(text(
+        "SELECT count(*) FROM danger_zones WHERE is_active "
+        "AND (expires_at IS NULL OR expires_at > NOW())"
+    )).scalar()
+    return {"status": "ok", "active_zones": zones}
 
 class RouteRequest(BaseModel):
     origin: str

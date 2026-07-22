@@ -9,7 +9,6 @@ intra-day, and the free tier is ~100 requests/MONTH -> 6 hours.
 """
 import os
 import requests
-from typing import Optional
 
 from services.cache import ttl_cache
 

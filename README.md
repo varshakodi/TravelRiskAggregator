@@ -1,5 +1,7 @@
 # Risk Aggregator v2.5 — Global Threat & Routing Engine
 
+![CI](https://github.com/varshakodi/TravelRiskAggregator/actions/workflows/ci.yml/badge.svg)
+
 A spatial routing engine that plans flight paths around real-world hazards.
 Given an origin and destination airport, it computes both the direct route
 and a hazard-aware route, using PostGIS geometry to detect when a path
@@ -141,6 +143,49 @@ flights on the selected route. OpenSky aircraft positions work with no key.
 | `POST /api/route/briefing` | AI-generated summary of a computed route |
 | `GET /api/live-flights` | Live aircraft positions (OpenSky) |
 | `GET /api/live-flights/{dep}/{arr}` | Real scheduled flights for a route (AviationStack) |
+| `GET /health` | Liveness probe (DB reachability + active zone count) |
+
+## Testing
+
+```bash
+cd backend
+venv/bin/pytest tests/ -v
+```
+
+Unit tests cover the routing verdict logic — including a regression test
+encoding the original route-safety bug (paths differ but the "safe" route
+still crosses a zone → must be `NO_SAFE_PATH`, never `REROUTED`) — plus
+threat-breakdown math, TTL cache expiry, and feed-adapter helpers.
+Integration tests run the real FastAPI app against a disposable PostGIS
+database built by the production Alembic migrations, and prove the
+lifecycle filters and every database constraint (FK / unique / enum) by
+attempting to violate them. CI runs the same suite on every push.
+
+## Docker
+
+```bash
+docker compose up          # PostGIS + migrated backend on :8000
+docker compose exec backend python seed.py   # seed once
+```
+
+## Deployment
+
+The system splits three ways (the backend needs an always-on process for
+its ingestion scheduler, so serverless platforms are out for that piece):
+
+| Piece | Platform | Config |
+|---|---|---|
+| Frontend | Vercel | root directory `frontend`, env `VITE_API_URL` = your Render URL |
+| Backend | Render (`render.yaml` blueprint) | env `DATABASE_URL`, `ALLOWED_ORIGINS` = your Vercel URL |
+| Database | Supabase (has PostGIS) | run `CREATE EXTENSION postgis;` once in the SQL editor |
+
+Steps: create the Supabase project and copy its connection string → deploy
+the backend on Render via this repo's blueprint, pasting `DATABASE_URL` →
+seed once from your machine (`DATABASE_URL=<supabase-url> python seed.py`)
+→ import the repo in Vercel with root directory `frontend` and set
+`VITE_API_URL` → set `ALLOWED_ORIGINS` on Render to the Vercel URL.
+Note: Render's free tier sleeps when idle — the first request after a
+quiet period takes up to a minute.
 
 ## Known limitations
 
@@ -154,9 +199,6 @@ Being upfront about the current state rather than overselling it:
   the cell. Severity thresholds / vertical awareness are future work.
 - **SIGMET polygons spanning the antimeridian** (±180° longitude) are
   stored as-is and may render or intersect oddly.
-- **No automated tests yet.** `backend/test_route.py` is a manual smoke
-  script, not a test suite; verification so far has been live end-to-end
-  checks.
 - **No auth or rate limiting** on the API.
 
 ## Roadmap
@@ -164,4 +206,4 @@ Being upfront about the current state rather than overselling it:
 1. ~~Explicit route-safety verdict + geodesic zone intersection + severity-weighted scoring~~ ✅
 2. ~~Alembic migrations, foreign keys, idempotent zone ingestion → scheduled updates re-enabled~~ ✅
 3. ~~Live SIGMET/earthquake feeds, computed threat matrix, hardened AI briefing, TTL caching~~ ✅
-4. Tests, CI, Docker, deployed demo
+4. ~~Tests (incl. regression suite), CI on real PostGIS, Docker~~ ✅ — deploy guide above, live URL pending
