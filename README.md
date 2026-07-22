@@ -57,20 +57,28 @@ flowchart LR
 | Layer | Stack |
 |---|---|
 | Frontend | React, React-Leaflet, Axios, custom CSS (dark-mode) |
-| Backend | FastAPI, SQLAlchemy, GeoAlchemy2 |
-| Database | PostgreSQL + PostGIS (`POINT` airports, `POLYGON` danger zones) |
-| Routing | Hand-rolled Dijkstra (`backend/services/pathfinder.py`) with Shapely spatial-intersection penalties |
+| Backend | FastAPI, SQLAlchemy, GeoAlchemy2, Alembic migrations |
+| Database | PostgreSQL + PostGIS (`POINT` airports, `POLYGON` danger zones, GIST spatial indexes) |
+| Routing | Hand-rolled Dijkstra (`backend/services/pathfinder.py`) over geodesic zone intersections computed in PostGIS |
+| Ingestion | APScheduler workers with idempotent upserts (`ON CONFLICT external_id DO UPDATE`) + zone expiry sweep |
 | Live data | OpenSky Network (aircraft positions), AviationStack (scheduled flights) |
 | AI | OpenAI-generated route briefing, with a deterministic offline fallback when no API key is set |
 
 ## How routing works
 
-Each `flight_edge` is weighted by great-circle distance plus a penalty if the
-edge's flight path intersects any `danger_zones` polygon (checked in Python
-with Shapely, using WKB geometry loaded from PostGIS). The engine runs
-Dijkstra twice — once with penalties disabled (`standard_route`) and once
-with them enabled (`safe_route`) — and the frontend diffs the two paths to
-decide what to render.
+A single SQL query annotates every `flight_edge` with the danger zones its
+flight path crosses, using `ST_Intersects` on PostGIS `geography` — which
+treats the segment between two airports as a great-circle arc (the path a
+plane actually flies), not a straight line in lon/lat space. Only active,
+unexpired zones count. Each edge is weighted
+`distance × (1 + λ · Σ zone_severity)`, so severity scales the penalty.
+
+Dijkstra runs twice — once ignoring risk (`standard_route`), once with
+penalties (`safe_route`) — and the verdict comes from what the winning path
+*actually crosses*, never from whether the two paths differ:
+`CLEAR` (direct path is safe), `REROUTED` (a clear detour exists), or
+`NO_SAFE_PATH` (every option crosses active threat airspace — reported
+honestly, with the zones named).
 
 See [`backend/services/pathfinder.py`](backend/services/pathfinder.py).
 
@@ -91,7 +99,8 @@ python3 -m venv venv
 venv/bin/pip install -r requirements.txt
 cp .env.example .env   # defaults already point at the local DB above
 
-# 3. Seed and run
+# 3. Build the schema (Alembic migrations), seed data, run
+venv/bin/alembic upgrade head
 venv/bin/python seed.py
 venv/bin/uvicorn main:app --reload --port 8000
 ```
@@ -129,24 +138,20 @@ flights on the selected route. OpenSky aircraft positions work with no key.
 
 Being upfront about the current state rather than overselling it:
 
-- **Route safety is a soft constraint, not a verified guarantee.** The
-  pathfinder heavily penalizes edges that cross a danger zone, but if
-  *every* path to a destination crosses one, it still returns the
-  cheapest option and reports it as clear. Fixing this — an explicit
-  post-hoc safety check on the chosen path — is the current priority.
-- **Zone intersection uses straight lon/lat line segments**, not
-  great-circle flight paths, which is geometrically wrong for long routes.
-- **Danger zones are static seed data**, not live feeds. The ingestion
-  workers in `backend/workers/` demonstrate the pipeline shape (PostGIS
-  polygon construction from event coordinates) but aren't wired to a real
-  feed yet, and aren't idempotent, so the scheduler that would run them
-  periodically is currently disabled.
+- **Ingestion feeds are simulated.** The scheduled workers in
+  `backend/workers/` run for real (idempotent upserts, expiry sweep), but
+  the events they ingest are hardcoded and honestly labeled "(Simulated)".
+  Wiring real feeds (AWC SIGMETs, USGS, GDELT) is the next milestone.
 - **No automated tests yet.** `backend/test_route.py` is a manual smoke
-  script, not a test suite.
+  script, not a test suite; verification so far has been live end-to-end
+  checks.
+- **The frontend "Threat Matrix" percentages are hardcoded** display
+  values, not computed from route data yet.
+- **No auth or rate limiting** on the API.
 
 ## Roadmap
 
-1. Explicit route-safety verdict + great-circle geometry + real risk-weighted scoring
-2. Alembic migrations, foreign keys, idempotent zone ingestion → re-enable scheduled updates
+1. ~~Explicit route-safety verdict + geodesic zone intersection + severity-weighted scoring~~ ✅
+2. ~~Alembic migrations, foreign keys, idempotent zone ingestion → scheduled updates re-enabled~~ ✅
 3. Live SIGMET/earthquake/conflict feeds, hardened AI briefing
 4. Tests, CI, Docker, deployed demo

@@ -1,24 +1,42 @@
 import json
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-from database import SessionLocal, engine
-from models import Base
+from apscheduler.schedulers.background import BackgroundScheduler
+
+from database import SessionLocal
 from services.pathfinder import calculate_route_comparison
 from services.ai_service import generate_threat_briefing
 from workers.aviation_worker import fetch_aviation_weather_alerts
-from workers.live_flights_worker import fetch_all_live_flights, fetch_route_flights
-
-# NEW: Import the background scheduler and our ingestion logic
-from apscheduler.schedulers.background import BackgroundScheduler
 from workers.data_ingestion import fetch_live_risk_data
+from workers.live_flights_worker import fetch_all_live_flights, fetch_route_flights
+from workers.zone_sweep import sweep_expired_zones
 
-# Ensure database architecture is built
-Base.metadata.create_all(bind=engine)
+# Schema is owned by Alembic (`alembic upgrade head`) — the app no longer
+# creates tables at import time.
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # -- startup: the ingestion pipelines are idempotent now (upserts keyed
+    # on external_id), so the scheduler is safe to run — re-firing a job
+    # updates rows in place instead of piling up duplicates.
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(fetch_live_risk_data, "interval", minutes=5)
+    scheduler.add_job(fetch_aviation_weather_alerts, "interval", minutes=5)
+    scheduler.add_job(sweep_expired_zones, "interval", minutes=10)
+    scheduler.start()
+    print("[Engine] Ingestion + expiry sweep scheduled (idempotent upserts).")
+    yield
+    # -- shutdown: stop cleanly so no job is left mid-flight.
+    scheduler.shutdown(wait=False)
+
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,17 +45,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# --- CRON SCHEDULER LIFECYCLE ---
-@app.on_event("startup")
-def start_data_pipelines():
-    # NOTE: Schedulers disabled to prevent duplicate zone insertion.
-    # Re-enable when connected to real ACLED/weather API keys.
-    # scheduler = BackgroundScheduler()
-    # scheduler.add_job(fetch_live_risk_data, 'interval', seconds=60)
-    # scheduler.add_job(fetch_aviation_weather_alerts, 'interval', seconds=60)
-    # scheduler.start()
-    print("[Engine] Static threat zones active. Live ingestion paused (no API keys configured).")
 
 def get_db():
     db = SessionLocal()
@@ -62,9 +69,13 @@ def get_airports(db: Session = Depends(get_db)):
 
 @app.get("/api/danger-zones")
 def get_danger_zones(db: Session = Depends(get_db)):
+    # Only live zones: retired (is_active=false) and expired ones stay in the
+    # table for history but never reach the map — matching what routing sees.
     query = text("""
-        SELECT id, source_event, description, risk_level, ST_AsGeoJSON(boundary) as geojson 
+        SELECT id, source_event, description, risk_level, ST_AsGeoJSON(boundary) as geojson
         FROM danger_zones
+        WHERE is_active = true
+          AND (expires_at IS NULL OR expires_at > NOW())
     """)
     result = db.execute(query).fetchall()
     return {"zones": [{"id": r.id, "source": r.source_event, "description": r.description, "severity": r.risk_level, "boundary": json.loads(r.geojson)} for r in result]}

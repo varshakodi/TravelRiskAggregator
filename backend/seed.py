@@ -1,21 +1,25 @@
 """
-Canonical database seed for local/demo use.
+Canonical database seed for local/demo use — DATA ONLY.
 
-This replaces 5 earlier competing seed scripts (seed_global, seed_massive,
-seed_production, seed_dynamic) with one source of truth:
+Schema is owned by Alembic (run `alembic upgrade head` first); this script
+just fills the tables:
   - 36 real-world airport hubs (verified IATA coordinates)
   - Great-circle (haversine) distances for every edge, not flat placeholders
   - 3 danger zones representing plausible scenarios, honestly labeled as
     seed data — NOT live feed output. Live ingestion lives in workers/ and
     is a separate, explicitly-labeled pipeline (see workers/data_ingestion.py).
 
-Schema management is still drop-all/create-all (no Alembic yet — Phase 2).
+Re-runnable: clears existing rows (children before parents, so the foreign
+keys allow it) and inserts fresh.
 """
 import itertools
 import math
+import sys
+
+from sqlalchemy import inspect
 
 from database import engine, SessionLocal
-from models import Base, Airport, FlightEdge, DangerZone
+from models import Airport, FlightEdge, DangerZone
 
 # (iata, name, lon, lat)
 AIRPORTS = [
@@ -80,20 +84,26 @@ DEFAULT_RISK = ("Low", "Standard operations.", 1.0)
 # Danger zone polygons: geographically placed so they sit over real corridors
 # without swallowing hub airports outright. Honestly labeled as seed
 # scenarios — compare workers/data_ingestion.py for the live-feed path.
+# (external_id, source, description, severity, ring)
+# external_id is each zone's stable identity — re-running seed (or a live
+# feed re-sending an event) updates the same row instead of creating twins.
 DANGER_ZONES = [
     (
+        "seed:iran-iraq-airspace",
         "Seed Scenario — Geopolitical",
         "Iran & Iraq restricted airspace. ICAO NOTAMs active.",
         10,
         [(44, 30), (63, 30), (63, 38), (44, 38)],
     ),
     (
+        "seed:ukraine-belarus-closure",
         "Seed Scenario — Geopolitical",
         "Ukraine & Belarus airspace closed to civil aviation.",
         9,
         [(22, 46), (40, 46), (40, 54), (22, 54)],
     ),
     (
+        "seed:philippine-sea-typhoon",
         "Seed Scenario — Aviation Weather",
         "Active typhoon corridor. Category 4 system tracked.",
         8,
@@ -133,10 +143,19 @@ def haversine_km(coord_map, iata1, iata2):
 
 
 def seed():
-    print("[Database] Dropping and recreating schema...")
-    Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
+    # Schema is Alembic's job now — fail with a helpful message if it hasn't run.
+    if not inspect(engine).has_table("airports"):
+        sys.exit("Tables missing. Run `alembic upgrade head` first, then re-run seed.")
+
     db = SessionLocal()
+
+    # Clear existing rows, children before parents (the foreign keys forbid
+    # deleting an airport while edges still reference it).
+    print("[Database] Clearing existing rows...")
+    db.query(FlightEdge).delete()
+    db.query(DangerZone).delete()
+    db.query(Airport).delete()
+    db.commit()
 
     print(f"[Database] Inserting {len(AIRPORTS)} airports...")
     coord_map = {code: (lon, lat) for code, _, lon, lat in AIRPORTS}
@@ -156,10 +175,11 @@ def seed():
 
     print(f"[Database] Inserting {len(DANGER_ZONES)} danger zones...")
     zone_rows = []
-    for source, description, severity, ring in DANGER_ZONES:
+    for external_id, source, description, severity, ring in DANGER_ZONES:
         closed_ring = ring + [ring[0]]
         wkt_points = ", ".join(f"{lon} {lat}" for lon, lat in closed_ring)
         zone_rows.append(DangerZone(
+            external_id=external_id,
             source_event=source,
             description=description,
             risk_level=severity,
@@ -187,7 +207,6 @@ def seed():
             source_iata=source,
             dest_iata=dest,
             base_distance_km=dist,
-            route_risk_modifier=0.0,
         ))
     db.add_all(edge_rows)
     db.commit()

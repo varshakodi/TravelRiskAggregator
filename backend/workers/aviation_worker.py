@@ -1,55 +1,66 @@
-import requests
-from sqlalchemy.orm import Session
+"""
+Aviation weather ingestion worker.
+
+Data source is still SIMULATED (honestly labeled) — Phase 3 swaps in real
+AWC SIGMET polygons. The mechanism is real: idempotent upsert keyed on
+external_id, same pattern as data_ingestion.py (see the explanation there).
+Weather cells get short validity windows — they expire in hours, not days.
+"""
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+
 from database import SessionLocal
 from models import DangerZone
+from workers.data_ingestion import _bbox_polygon_wkt
+
 
 def fetch_aviation_weather_alerts():
-    """
-    Pulls operational atmospheric anomalies (Severe Convective Cells/Cyclones).
-    Generates PostGIS spatial exclusion zones dynamically based on active coordinate matrices.
-    """
-    print("\n[Telemetry] Pulling live aviation weather data points...")
+    """Ingest severe-weather cells as danger zones (idempotently)."""
+    print("[Telemetry] Aviation weather fetch (simulated feed)...")
     db = SessionLocal()
-    
     try:
-        # Connect to OpenWeatherMap, NOAA, or an active aviation weather feed.
-        # Below is the schema setup extracting severe high-altitude convective storm data
-        # targeting transit routes over the Mediterranean/Indian Ocean corridors.
+        now = datetime.now(timezone.utc)
         weather_feeds = [
             {
-                "source": "AWC SIGMET Matrix",
+                "external_id": "sim-awc:mediterranean-convective-001",
+                "source": "AWC SIGMET (Simulated)",
                 "description": "Severe Convective Cell - Flight Level FL340-FL410",
-                "center_lat": 34.5,
-                "center_lon": 22.0,
-                "radius_degrees": 2.0,
-                "severity_score": 7
+                "lat": 34.5,
+                "lon": 22.0,
+                "radius_deg": 2.0,
+                "severity": 7,
+                "valid_hours": 4,
             }
         ]
 
         for alert in weather_feeds:
-            # Build actual spatial bounding polygons based on the target center vector
-            lon = alert["center_lon"]
-            lat = alert["center_lat"]
-            r = alert["radius_degrees"]
-            
-            # Form standard closed geometric ring
-            polygon_wkt = f"SRID=4326;POLYGON(({lon-r} {lat-r}, {lon+r} {lat-r}, {lon+r} {lat+r}, {lon-r} {lat+r}, {lon-r} {lat-r}))"
-            
-            weather_layer = DangerZone(
-                source_event=alert["source"],
-                description=alert["description"],
-                risk_level=alert["severity_score"],
-                boundary=polygon_wkt
+            row = {
+                "external_id": alert["external_id"],
+                "source_event": alert["source"],
+                "description": alert["description"],
+                "risk_level": alert["severity"],
+                "boundary": _bbox_polygon_wkt(alert["lon"], alert["lat"], alert["radius_deg"]),
+                "starts_at": now,
+                "expires_at": now + timedelta(hours=alert["valid_hours"]),
+                "is_active": True,
+            }
+            stmt = pg_insert(DangerZone).values(**row).on_conflict_do_update(
+                index_elements=["external_id"],
+                set_={k: row[k] for k in
+                      ("source_event", "description", "risk_level",
+                       "boundary", "expires_at", "is_active")},
             )
-            db.add(weather_layer)
-            
+            db.execute(stmt)
+
         db.commit()
-        print("[Telemetry] Active convective cell polygons mapped successfully into PostGIS spatial layers.")
+        print(f"[Telemetry] Upserted {len(weather_feeds)} cell(s) — safe to re-run.")
     except Exception as e:
-        print(f"[Telemetry] Weather parsing pipeline failure: {e}")
+        print(f"[Telemetry] Weather ingestion failed: {e}")
         db.rollback()
     finally:
         db.close()
+
 
 if __name__ == "__main__":
     fetch_aviation_weather_alerts()

@@ -35,6 +35,13 @@ EDGE_QUERY = text("""
             ST_MakeLine(a1.location, a2.location)::geography,
             dz.boundary::geography
         )
+        -- Lifecycle filter lives in the ON clause, NOT in a WHERE: filtering
+        -- a left-joined table's columns in WHERE silently drops the rows
+        -- where the zone side is NULL — i.e. every SAFE edge — turning the
+        -- LEFT JOIN into an inner join. In ON, it only limits which zones
+        -- attach to an edge; edges themselves always survive.
+        AND dz.is_active = true
+        AND (dz.expires_at IS NULL OR dz.expires_at > NOW())
     GROUP BY fe.id, fe.source_iata, fe.dest_iata, fe.base_distance_km
 """)
 
