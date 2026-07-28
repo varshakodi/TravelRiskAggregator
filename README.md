@@ -200,10 +200,3 @@ Being upfront about the current state rather than overselling it:
 - **SIGMET polygons spanning the antimeridian** (±180° longitude) are
   stored as-is and may render or intersect oddly.
 - **No auth or rate limiting** on the API.
-
-## Roadmap
-
-1. ~~Explicit route-safety verdict + geodesic zone intersection + severity-weighted scoring~~ ✅
-2. ~~Alembic migrations, foreign keys, idempotent zone ingestion → scheduled updates re-enabled~~ ✅
-3. ~~Live SIGMET/earthquake feeds, computed threat matrix, hardened AI briefing, TTL caching~~ ✅
-4. ~~Tests (incl. regression suite), CI on real PostGIS, Docker~~ ✅ — deploy guide above, live URL pending
