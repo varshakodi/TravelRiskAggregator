@@ -187,6 +187,22 @@ seed once from your machine (`DATABASE_URL=<supabase-url> python seed.py`)
 Note: Render's free tier sleeps when idle — the first request after a
 quiet period takes up to a minute.
 
+### Keeping the free-tier demo alive
+
+Idle free tiers decay: Render sleeps after ~15 minutes, and Supabase
+pauses a project after ~7 days without database activity (long-paused
+projects can eventually be deleted). Two safeguards:
+
+- `.github/workflows/keepalive.yml` pings `/health` every 6 hours — the
+  ping wakes Render, whose health check queries the database, which keeps
+  Supabase active. GitHub disables cron workflows after ~60 days of repo
+  inactivity (it emails first); re-enable with one click under Actions.
+- **Before demoing:** open the site a minute early to absorb the cold
+  start. If the map loads but no data appears after a long shelf period,
+  check the Supabase dashboard — a paused project restores with one click,
+  and `alembic upgrade head` + `seed.py` rebuild it from scratch in
+  minutes if it was ever deleted.
+
 ## Known limitations
 
 Being upfront about the current state rather than overselling it:

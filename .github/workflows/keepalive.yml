@@ -1,0 +1,26 @@
+name: Keep-alive
+
+# Free-tier hosting decays when idle: Render sleeps after ~15 idle minutes,
+# and Supabase pauses projects after ~7 idle days (long-paused projects can
+# be deleted). This ping wakes the backend every 6 hours; its /health
+# handler queries the database, which counts as Supabase activity — so the
+# whole stack stays alive at $0 while the project sits on the shelf.
+#
+# Note: GitHub disables scheduled workflows after ~60 days without repo
+# activity — it emails a warning first, and re-enabling is one click under
+# the Actions tab (any commit also resets the clock).
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"   # every 6 hours
+  workflow_dispatch:         # manual "Run workflow" button, for testing
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake backend (first request may hit a cold start)
+        run: |
+          curl -sS --max-time 120 https://travelriskaggregator.onrender.com/health || true
+          sleep 60
+          curl -sS --max-time 60 https://travelriskaggregator.onrender.com/health
