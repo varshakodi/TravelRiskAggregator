@@ -1,26 +1,39 @@
 name: Keep-alive
 
-# Free-tier hosting decays when idle: Render sleeps after ~15 idle minutes,
-# and Supabase pauses projects after ~7 idle days (long-paused projects can
-# be deleted). This ping wakes the backend every 6 hours; its /health
-# handler queries the database, which counts as Supabase activity — so the
-# whole stack stays alive at $0 while the project sits on the shelf.
+# Free-tier hosting decays when idle, on two very different clocks:
+#   * Render sleeps the instance after ~15 idle minutes. Waking it costs a
+#     cold boot the visitor pays for, so the ping has to beat that 15-minute
+#     window — a slower schedule leaves the backend asleep for almost every
+#     real visit.
+#   * Supabase pauses a project after ~7 idle days. The /health handler
+#     queries the database, so each ping counts as activity there too.
+#
+# Budget: Render's free tier allows 750 instance-hours per month and a long
+# month is 744, so one service kept awake around the clock fits — with no
+# headroom for a second free service in the same workspace. This repo is
+# public, so the Actions minutes themselves are free.
 #
 # Note: GitHub disables scheduled workflows after ~60 days without repo
 # activity — it emails a warning first, and re-enabling is one click under
-# the Actions tab (any commit also resets the clock).
+# the Actions tab (any commit also resets the clock). GitHub also queues
+# scheduled runs under load, so treat 10 minutes as a floor, not a promise.
 
 on:
   schedule:
-    - cron: "0 */6 * * *"   # every 6 hours
-  workflow_dispatch:         # manual "Run workflow" button, for testing
+    - cron: "*/10 * * * *"   # every 10 minutes — must stay under Render's ~15
+  workflow_dispatch:          # manual "Run workflow" button, for testing
+
+# A late run must never pile up on the one before it.
+concurrency:
+  group: keepalive
+  cancel-in-progress: false
 
 jobs:
   ping:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: Wake backend (first request may hit a cold start)
-        run: |
-          curl -sS --max-time 120 https://travelriskaggregator.onrender.com/health || true
-          sleep 60
-          curl -sS --max-time 60 https://travelriskaggregator.onrender.com/health
+      - name: Ping backend health check
+        # --max-time is generous on purpose: if the schedule slipped and the
+        # instance did sleep, this request is the one paying the cold boot.
+        run: curl -sSf --max-time 120 https://travelriskaggregator.onrender.com/health
