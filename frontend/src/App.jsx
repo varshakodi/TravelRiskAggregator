@@ -32,16 +32,27 @@ export default function App() {
   const [isAiThinking, setIsAiThinking] = useState(false);
   const [routeFlights, setRouteFlights] = useState([]);
   const [loadError, setLoadError] = useState(null);
+  const [wakingBackend, setWakingBackend] = useState(false);
 
-  // Initial data load
+  // Initial data load. The API runs on free-tier hosting that sleeps when
+  // idle, so the first request after a quiet spell pays a cold boot that can
+  // run to a minute. If it hasn't answered in four seconds we say why —
+  // an unexplained spinner reads as a broken site, which is the actual cost.
   useEffect(() => {
+    const coldBootTimer = setTimeout(() => setWakingBackend(true), 4000);
+
     Promise.all([api.get('/api/airports'), api.get('/api/danger-zones')])
       .then(([airportsRes, zonesRes]) => {
         if (airportsRes.data?.airports) setAirports(airportsRes.data.airports);
         if (zonesRes.data?.zones) setDangerZones(zonesRes.data.zones);
       })
       .catch(() => setLoadError('Could not reach the routing engine. Refresh to retry.'))
-      .finally(() => setLoading(false));
+      .finally(() => {
+        clearTimeout(coldBootTimer);
+        setLoading(false);
+      });
+
+    return () => clearTimeout(coldBootTimer);
   }, []);
 
   // Route computation
@@ -79,10 +90,6 @@ export default function App() {
       .finally(() => setIsAnalyzing(false));
   }, [activeRouteParams]);
 
-  if (loading) {
-    return <div className="app-loading">Loading airspace data…</div>;
-  }
-
   const coords = (route) =>
     route?.path
       ?.map((iata) => {
@@ -105,7 +112,7 @@ export default function App() {
           </div>
           <span className="chip">
             <span className="dot" />
-            {dangerZones.length} active zones
+            {loading ? 'connecting…' : `${dangerZones.length} active zones`}
           </span>
         </header>
 
@@ -118,9 +125,20 @@ export default function App() {
             />
           )}
 
+          {loading && (
+            <div className="hint-card hint-card--loading">
+              <span className="spinner" aria-hidden="true" />
+              <span>
+                {wakingBackend
+                  ? 'Waking the routing engine. It sleeps when idle on free hosting, so the first request after a quiet spell can take up to a minute. The map fills in the moment it answers.'
+                  : 'Loading airspace data…'}
+              </span>
+            </div>
+          )}
+
           {loadError && <div className="hint-card">{loadError}</div>}
 
-          {!routeData && !isAnalyzing && !loadError && (
+          {!loading && !routeData && !isAnalyzing && !loadError && (
             <div className="hint-card">
               Select an origin and destination to compute a hazard-aware route.
               The engine avoids live SIGMET weather cells, conflict airspace and

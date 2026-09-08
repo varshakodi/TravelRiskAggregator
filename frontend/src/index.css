@@ -66,16 +66,6 @@ html, body {
   overflow: hidden;
 }
 
-.app-loading {
-  width: 100vw;
-  height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--ink-3);
-  font-size: 0.85rem;
-}
-
 .sidebar {
   flex-shrink: 0;
   width: 384px;
@@ -179,6 +169,31 @@ html, body {
   color: var(--ink-3);
   font-size: 0.8rem;
   line-height: 1.55;
+}
+
+.hint-card--loading {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.spinner {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  margin-top: 3px;
+  border: 1.5px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Respect a reduced-motion preference: keep the accent tick as a static
+   cue rather than replacing it with nothing. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; }
 }
 
 /* ── Search panel ──────────────────────────────────────────────── */
