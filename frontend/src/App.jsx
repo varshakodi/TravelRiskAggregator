@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { MapContainer, TileLayer, Popup, CircleMarker, Polyline, GeoJSON } from 'react-leaflet';
+import { MapContainer, TileLayer, Popup, CircleMarker, Polyline, GeoJSON, AttributionControl } from 'react-leaflet';
 import { api } from './api';
 import 'leaflet/dist/leaflet.css';
 
@@ -17,6 +17,22 @@ const COLOR = {
   warn: '#fab219',
   critical: '#d03b3b',
 };
+
+// CARTO began watermarking unauthenticated raster tiles in August 2026: the
+// endpoint still answers 200, it just stamps "API KEY REQUIRED" into the PNG.
+// The key is a build-time env var because tile keys necessarily ship in the
+// bundle — every browser tile provider works this way — so CARTO scopes them
+// to the registered domain rather than treating them as secrets. Without one
+// the URL is left bare, which is watermarked but still renders.
+const CARTO_KEY = import.meta.env.VITE_CARTO_API_KEY;
+const BASEMAP_URL =
+  'https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png' +
+  (CARTO_KEY ? `?key=${CARTO_KEY}` : '');
+
+// Required by CARTO's terms, and by OpenStreetMap's licence upstream of them.
+const BASEMAP_ATTRIBUTION =
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> ' +
+  '&copy; <a href="https://carto.com/attributions">CARTO</a>';
 
 const airportColor = (risk) =>
   risk === 'High' ? COLOR.critical : risk === 'Medium' ? COLOR.warn : COLOR.good;
@@ -172,9 +188,14 @@ export default function App() {
           maxBounds={[[-85, -180], [85, 180]]}
           maxBoundsViscosity={1.0}
           zoomControl={true}
+          attributionControl={false}
         >
+          {/* Bottom-left: the legend already owns the bottom-right corner. */}
+          <AttributionControl position="bottomleft" prefix={false} />
+
           <TileLayer
-            url="https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png"
+            url={BASEMAP_URL}
+            attribution={BASEMAP_ATTRIBUTION}
             noWrap={true}
           />
 
