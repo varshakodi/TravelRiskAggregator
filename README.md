@@ -8,12 +8,22 @@ and a hazard-aware route, using PostGIS geometry to detect when a path
 crosses an active danger zone (conflict airspace, severe weather) and a
 custom Dijkstra implementation to route around it.
 
-<!--
-  TODO: add a screenshot/GIF here — drop the file at docs/screenshot.png and
-  add `![Risk Aggregator screenshot](docs/screenshot.png)` above this comment.
-  Run the app (see Quickstart) and grab one showing a rerouted path,
-  e.g. IST -> DXB or IST -> HND.
--->
+![Risk Aggregator computing a hazard-aware route from London Heathrow to Tokyo
+Haneda. Every corridor is blocked by active thunderstorm SIGMETs, so the engine
+reports NO_SAFE_PATH and names each zone rather than inventing a clean
+route.](docs/screenshot-route.png)
+
+*LHR → HND on a stormy day. The dashed red line is the direct path; the violet
+line is the lowest-risk option the engine found. Both cross active airspace, so
+the verdict is an honest `NO_SAFE_PATH` with every blocking zone named.*
+
+![The live hazard map with a danger zone popup open, showing a severity 10/10
+geopolitical zone covering Iranian and Iraqi restricted
+airspace.](docs/screenshot-map.png)
+
+*143 live zones on the map — SIGMET polygons and USGS earthquakes refreshed on a
+scheduler, plus a few labeled seed scenarios. Clicking any zone shows its source
+and severity.*
 
 ## What it does
 
@@ -175,8 +185,8 @@ its ingestion scheduler, so serverless platforms are out for that piece):
 
 | Piece | Platform | Config |
 |---|---|---|
-| Frontend | Vercel | root directory `frontend`, env `VITE_API_URL` = your Render URL |
-| Backend | Render (`render.yaml` blueprint) | env `DATABASE_URL`, `ALLOWED_ORIGINS` = your Vercel URL |
+| Frontend | Vercel | root directory `frontend`, env `VITE_API_URL` = your Render URL, `CARTO_API_KEY` = basemap key (see below) |
+| Backend | Render (`render.yaml` blueprint) | env `DATABASE_URL`, `ALLOWED_ORIGINS` = your Vercel URL. Build `pip install -r requirements.txt && alembic upgrade head`, start `uvicorn main:app` |
 | Database | Supabase (has PostGIS) | run `CREATE EXTENSION postgis;` once in the SQL editor |
 
 Steps: create the Supabase project and copy its connection string → deploy
@@ -184,8 +194,21 @@ the backend on Render via this repo's blueprint, pasting `DATABASE_URL` →
 seed once from your machine (`DATABASE_URL=<supabase-url> python seed.py`)
 → import the repo in Vercel with root directory `frontend` and set
 `VITE_API_URL` → set `ALLOWED_ORIGINS` on Render to the Vercel URL.
-Note: Render's free tier sleeps when idle — the first request after a
-quiet period takes up to a minute.
+
+Both frontend variables are inlined at **build** time, so changing either needs
+a redeploy with the build cache disabled. `ALLOWED_ORIGINS` matches the origin
+exactly — Vercel's per-deployment preview URLs are *not* the production domain,
+so opening one renders the map but has its API calls refused by CORS.
+
+**Basemap key.** CARTO began watermarking unauthenticated raster tiles in
+August 2026 — the endpoint still returns `200 OK`, with `API KEY REQUIRED`
+baked into the PNG. Get a free key at
+[carto.com/basemaps/apikey](https://carto.com/basemaps/apikey/) and set it as
+`CARTO_API_KEY` on Vercel. Note the missing `VITE_` prefix: Vercel refuses to
+store a value under a public framework prefix, so
+[`frontend/vite.config.js`](frontend/vite.config.js) injects it via `define`
+instead. It is not a secret either way — a tile key necessarily ships in the
+client bundle, which is why CARTO scopes it to a registered domain.
 
 ### Keeping the free-tier demo alive
 
@@ -193,15 +216,26 @@ Idle free tiers decay: Render sleeps after ~15 minutes, and Supabase
 pauses a project after ~7 days without database activity (long-paused
 projects can eventually be deleted). Two safeguards:
 
-- `.github/workflows/keepalive.yml` pings `/health` every 6 hours — the
-  ping wakes Render, whose health check queries the database, which keeps
-  Supabase active. GitHub disables cron workflows after ~60 days of repo
-  inactivity (it emails first); re-enable with one click under Actions.
-- **Before demoing:** open the site a minute early to absorb the cold
-  start. If the map loads but no data appears after a long shelf period,
-  check the Supabase dashboard — a paused project restores with one click,
-  and `alembic upgrade head` + `seed.py` rebuild it from scratch in
-  minutes if it was ever deleted.
+- **An external scheduler** (cron-job.org, UptimeRobot — both free) pinging
+  `/health` every 10 minutes. That handler queries the database, so a single
+  ping beats Render's 15-minute sleep *and* counts as Supabase activity.
+- `.github/workflows/keepalive.yml` runs the same ping on a `*/10` cron, but
+  **do not rely on it**: GitHub treats `schedule:` as best-effort, and measured
+  over two days this repo saw gaps of 117–423 minutes against that schedule —
+  every run green, just hours apart. It is kept as a zero-cost backstop and for
+  its manual trigger. (GitHub also disables cron workflows after ~60 days of
+  repo inactivity; it emails first, and re-enabling is one click under Actions.)
+- **The app degrades rather than failing.** The initial load retries three
+  times, so a cold start becomes a slower page — with copy explaining the wait —
+  instead of an error. The UI shell, map and legend render immediately.
+- If the map loads but no data appears after a long shelf period, check the
+  Supabase dashboard — a paused project restores with one click, and
+  `alembic upgrade head` + `seed.py` rebuild it from scratch in minutes.
+
+Budget note: Render allows **750 free instance-hours per workspace per month**
+against 744 hours in a long month, so one service kept awake round-the-clock
+fits with almost no margin. A second free service belongs in a separate
+workspace — exhausting the pool suspends every free service in that workspace.
 
 ## Known limitations
 
