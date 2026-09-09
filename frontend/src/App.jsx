@@ -20,11 +20,11 @@ const COLOR = {
 
 // CARTO began watermarking unauthenticated raster tiles in August 2026: the
 // endpoint still answers 200, it just stamps "API KEY REQUIRED" into the PNG.
-// The key is a build-time env var because tile keys necessarily ship in the
-// bundle — every browser tile provider works this way — so CARTO scopes them
-// to the registered domain rather than treating them as secrets. Without one
-// the URL is left bare, which is watermarked but still renders.
-const CARTO_KEY = import.meta.env.VITE_CARTO_API_KEY;
+// __CARTO_API_KEY__ is injected at build time from the unprefixed
+// CARTO_API_KEY env var — see vite.config.js for why it isn't read straight
+// from import.meta.env. Without a key the URL is left bare, which is
+// watermarked but still renders, so the map degrades rather than breaking.
+const CARTO_KEY = __CARTO_API_KEY__;
 const BASEMAP_URL =
   'https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png' +
   (CARTO_KEY ? `?key=${CARTO_KEY}` : '');

@@ -6,15 +6,21 @@ import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
   globalIgnores(['dist']),
+  // Config files run in Node, not the browser — they need process/__dirname.
   {
-    files: ['**/*.{js,jsx}'],
+    files: ['*.config.js'],
+    languageOptions: { globals: globals.node },
+  },
+  {
+    files: ['src/**/*.{js,jsx}'],
     extends: [
       js.configs.recommended,
       reactHooks.configs.flat.recommended,
       reactRefresh.configs.vite,
     ],
     languageOptions: {
-      globals: globals.browser,
+      // Injected at build time by vite.config.js `define`.
+      globals: { ...globals.browser, __CARTO_API_KEY__: 'readonly' },
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
   },
