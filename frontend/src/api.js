@@ -5,8 +5,9 @@ import axios from 'axios';
 // (e.g. https://your-backend.onrender.com) at build time.
 export const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000',
-  // Long enough to sit through a cold boot on idle-sleeping free hosting,
-  // short enough that a genuinely dead backend surfaces as an error the
-  // user can act on instead of a spinner that never resolves.
-  timeout: 90000,
+  // Per-attempt, not per-page-load: the initial fetch retries (see App.jsx),
+  // so this only needs to outlast one cold boot rather than every possible
+  // one. Keeping it at 60s bounds the worst case to something a person will
+  // actually sit through instead of a single 90s stare at a spinner.
+  timeout: 60000,
 });

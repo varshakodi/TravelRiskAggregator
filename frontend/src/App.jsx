@@ -34,6 +34,11 @@ const BASEMAP_ATTRIBUTION =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> ' +
   '&copy; <a href="https://carto.com/attributions">CARTO</a>';
 
+// Three attempts at 60s each bounds a cold start to roughly two minutes in
+// the worst case, while the common case resolves on attempt two.
+const LOAD_ATTEMPTS = 3;
+const RETRY_DELAY_MS = 3000;
+
 const airportColor = (risk) =>
   risk === 'High' ? COLOR.critical : risk === 'Medium' ? COLOR.warn : COLOR.good;
 
@@ -51,24 +56,48 @@ export default function App() {
   const [wakingBackend, setWakingBackend] = useState(false);
 
   // Initial data load. The API runs on free-tier hosting that sleeps when
-  // idle, so the first request after a quiet spell pays a cold boot that can
-  // run to a minute. If it hasn't answered in four seconds we say why —
-  // an unexplained spinner reads as a broken site, which is the actual cost.
+  // idle, and the request that wakes it can outlast a single timeout — that
+  // request is the one paying for the container start. Retrying rather than
+  // surrendering is the whole fix: attempt one wakes the instance, and a
+  // later attempt lands on a warm process and returns in about a second.
+  // Only once every attempt has failed is the engine genuinely unreachable.
+  // Four seconds in we explain the wait, because an unexplained spinner
+  // reads as a broken site.
   useEffect(() => {
-    const coldBootTimer = setTimeout(() => setWakingBackend(true), 4000);
+    let cancelled = false;
+    const coldBootTimer = setTimeout(() => {
+      if (!cancelled) setWakingBackend(true);
+    }, 4000);
 
-    Promise.all([api.get('/api/airports'), api.get('/api/danger-zones')])
-      .then(([airportsRes, zonesRes]) => {
-        if (airportsRes.data?.airports) setAirports(airportsRes.data.airports);
-        if (zonesRes.data?.zones) setDangerZones(zonesRes.data.zones);
-      })
-      .catch(() => setLoadError('Could not reach the routing engine. Refresh to retry.'))
-      .finally(() => {
-        clearTimeout(coldBootTimer);
-        setLoading(false);
-      });
+    (async () => {
+      for (let attempt = 1; attempt <= LOAD_ATTEMPTS; attempt += 1) {
+        try {
+          const [airportsRes, zonesRes] = await Promise.all([
+            api.get('/api/airports'),
+            api.get('/api/danger-zones'),
+          ]);
+          if (cancelled) return;
+          if (airportsRes.data?.airports) setAirports(airportsRes.data.airports);
+          if (zonesRes.data?.zones) setDangerZones(zonesRes.data.zones);
+          break;
+        } catch {
+          if (cancelled) return;
+          if (attempt === LOAD_ATTEMPTS) {
+            setLoadError('Could not reach the routing engine. Refresh to retry.');
+          } else {
+            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+          }
+        }
+      }
+      if (cancelled) return;
+      clearTimeout(coldBootTimer);
+      setLoading(false);
+    })();
 
-    return () => clearTimeout(coldBootTimer);
+    return () => {
+      cancelled = true;
+      clearTimeout(coldBootTimer);
+    };
   }, []);
 
   // Route computation
