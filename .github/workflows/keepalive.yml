@@ -13,14 +13,28 @@ name: Keep-alive
 # headroom for a second free service in the same workspace. This repo is
 # public, so the Actions minutes themselves are free.
 #
+# THIS ALONE IS NOT ENOUGH — measured, not assumed. Over 2026-09-07..09 this
+# workflow fired with gaps of 117, 147, 236, 277, 280, 325 and 423 minutes
+# against a */10 schedule. Every run succeeded; GitHub simply declined to run
+# it on time. Scheduled workflows are best-effort — "*/10" means eligible
+# every 10 minutes, not guaranteed — and low-traffic public repos get
+# deprioritised further as an anti-abuse measure. Averaged out it behaved
+# like the 6-hour cron it replaced, which is to say the backend still slept
+# through most of the day.
+#
+# So the real keep-alive is an external scheduler (cron-job.org or
+# UptimeRobot, both free) pointed at the same /health URL. This workflow is
+# kept as a zero-cost backstop and for the manual Run button, not as the
+# primary mechanism. The frontend also retries its initial load, so a cold
+# start degrades into a slower page rather than an error.
+#
 # Note: GitHub disables scheduled workflows after ~60 days without repo
 # activity — it emails a warning first, and re-enabling is one click under
-# the Actions tab (any commit also resets the clock). GitHub also queues
-# scheduled runs under load, so treat 10 minutes as a floor, not a promise.
+# the Actions tab (any commit also resets the clock).
 
 on:
   schedule:
-    - cron: "*/10 * * * *"   # every 10 minutes — must stay under Render's ~15
+    - cron: "*/10 * * * *"   # aspirational; see the note above on delivery
   workflow_dispatch:          # manual "Run workflow" button, for testing
 
 # A late run must never pile up on the one before it.
